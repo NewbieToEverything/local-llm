@@ -1,0 +1,32 @@
+services:
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llama-gemma4-26BA4B
+    user: "${HOST_UID}:${HOST_GID}"
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./models:/models:ro
+    environment:
+      - LLAMA_ARG_MODEL=/models/gemma-4-26B-A4B-it-Q4_K_M.gguf
+      - LLAMA_ARG_FIT=on
+      - LLAMA_ARG_CTX_SIZE=262144
+      - LLAMA_ARG_N_THREADS=4
+      - LLAMA_ARG_FLASH_ATTN=on
+      - LLAMA_ARG_NO_MMAP=true
+      - LLAMA_ARG_CTK=q8_0
+      - LLAMA_ARG_CTV=q8_0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
