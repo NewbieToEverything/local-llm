@@ -45,6 +45,15 @@ docker run --rm \
 - `-x 10`：10 并发连接（官方建议 1-10）
 - `HF_ENDPOINT`：使用 hf-mirror.com 镜像源加速下载
 
+### 监控下载进度
+
+```bash
+./monitor.sh gpt-oss-20b gpt-oss-20b-Q4_K_M.gguf
+```
+
+- 参数1：项目名称
+- 参数2：模型文件名
+
 ## 启动命令
 
 | 项目 | 预设端口 | 预设上下文长度 | 启动命令 |
