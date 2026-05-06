@@ -9,7 +9,7 @@ services:
       - ./models:/models:ro
     environment:
       - LLAMA_ARG_MODEL=/models/gpt-oss-20b-Q4_K_M.gguf
-      - LLAMA_ARG_N_GPU_LAYERS=128
+      - LLAMA_ARG_N_GPU_LAYERS=24
       - LLAMA_ARG_CTX_SIZE=131072
       - LLAMA_ARG_N_THREADS=10
       - LLAMA_ARG_N_THREADS_BATCH=12

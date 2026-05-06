@@ -11,7 +11,7 @@ services:
       - LLAMA_ARG_MODEL=/models/gemma-4-26B-A4B-it-Q4_K_M.gguf
       - LLAMA_ARG_FIT=on
       - LLAMA_ARG_CTX_SIZE=262144
-      - LLAMA_ARG_N_THREADS=4
+      - LLAMA_ARG_N_THREADS=10
       - LLAMA_ARG_FLASH_ATTN=on
       - LLAMA_ARG_NO_MMAP=true
       - LLAMA_ARG_CTK=q8_0
