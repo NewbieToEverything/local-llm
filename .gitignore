@@ -1,0 +1,5 @@
+# GGUF 模型文件
+*.gguf
+
+# 各项目的 models 目录
+*/models/
