@@ -1,0 +1,36 @@
+services:
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llama-gpt-oss-20b
+    user: "${HOST_UID}:${HOST_GID}"
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./models:/models:ro
+    environment:
+      - LLAMA_ARG_MODEL=/models/gpt-oss-20b-Q4_K_M.gguf
+      - LLAMA_ARG_N_GPU_LAYERS=128
+      - LLAMA_ARG_CTX_SIZE=131072
+      - LLAMA_ARG_N_THREADS=10
+      - LLAMA_ARG_N_THREADS_BATCH=12
+      - LLAMA_ARG_N_BATCH=2048
+      - LLAMA_ARG_N_UBATCH=512
+      - LLAMA_ARG_PARALLEL=4
+      - LLAMA_ARG_FLASH_ATTN=on
+      - LLAMA_ARG_NO_MMAP=true
+      - LLAMA_ARG_CTK=q8_0
+      - LLAMA_ARG_CTV=q8_0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
