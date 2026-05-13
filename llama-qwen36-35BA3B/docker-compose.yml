@@ -18,6 +18,8 @@ services:
       - LLAMA_ARG_NO_MMAP=true
       - LLAMA_ARG_CTK=q8_0
       - LLAMA_ARG_CTV=q8_0
+      - LLAMA_ARG_MMPROJ=/models/mmproj-F32.gguf
+      - LLAMA_ARG_MMPROJ_OFFLOAD=off
       - GGML_CUDA_GRAPH_OPT=1
       - LLAMA_SET_ROWS=1
     deploy:

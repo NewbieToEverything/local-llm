@@ -27,7 +27,8 @@
 
 ## 下载模型文件
 
-`download-helper/` 目录提供下载容器，该容器使用 python:3.11-slim 为基础的自定义镜像，使用 hfd 脚本支持断点续传和多线程高速下载，容器启动模板如下：
+### 方案 A：hfd
+`download-helper/` 目录提供下载容器，该容器使用 python:3.11-slim 为基础的自定义镜像，使用 hfd 脚本支持断点续传和多线程高速下载。下载前需确认模型文件的正确名称。容器启动模板如下：
 
 ```bash
 cd download-helper
@@ -44,6 +45,26 @@ docker run --rm \
 **参数说明**：
 - `-x 10`：10 并发连接（官方建议 1-10）
 - `HF_ENDPOINT`：使用 hf-mirror.com 镜像源加速下载
+
+### 方案 B：curl 容器下载命令
+- **用途**：避免 huggingface-cli lock 问题
+- **命令格式**：
+```bash
+docker run --rm \
+  -v /home/liyujun/projects/local-llm/xxx/models:/models \
+  -u "1000:1001" \
+  curlimages/curl:8.5.0 \
+  -L -C - -o /models/模型文件名.gguf \
+  https://hf-mirror.com/路径/模型文件名.gguf
+```
+- **参数说明**：
+  - `-L`: 跟随重定向
+  - `-C -`: 断点续传
+  - `-o`: 输出文件路径
+- **实际示例**：
+```bash
+docker run --rm -v /home/liyujun/projects/local-llm/llama-gemma4-26BA4B/models:/models -u "1000:1001" curlimages/curl:8.5.0 -L -C - -o /models/gemma-4-26B-A4B-it-Q4_K_M.gguf https://hf-mirror.com/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf
+```
 
 ### 监控下载进度
 
