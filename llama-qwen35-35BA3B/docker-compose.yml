@@ -16,6 +16,7 @@ services:
       - LLAMA_ARG_NO_MMAP=true
       - LLAMA_ARG_CTK=q8_0
       - LLAMA_ARG_CTV=q8_0
+      - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}'
     deploy:
       resources:
         reservations:

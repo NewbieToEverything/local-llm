@@ -22,6 +22,7 @@ services:
       - LLAMA_ARG_MMPROJ_OFFLOAD=off
       - GGML_CUDA_GRAPH_OPT=1
       - LLAMA_SET_ROWS=1
+      - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}'
     deploy:
       resources:
         reservations:
