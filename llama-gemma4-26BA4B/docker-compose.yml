@@ -9,6 +9,8 @@ services:
       - ./models:/models:ro
     environment:
       - LLAMA_ARG_MODEL=/models/gemma-4-26B-A4B-it-Q4_K_M.gguf
+      - LLAMA_ARG_MMPROJ=/models/mmproj-F16.gguf
+      - LLAMA_ARG_MMPROJ_OFFLOAD=off
       - LLAMA_ARG_FIT=on
       - LLAMA_ARG_CTX_SIZE=262144
       - LLAMA_ARG_N_THREADS=10
