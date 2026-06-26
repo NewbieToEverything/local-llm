@@ -10,23 +10,23 @@
 
 下表中的速度和延迟均指在 NVIDIA RTX 5070 Ti (16GB VRAM) 上的表现。
 
-| 指标 | GPT-OSS-20B | GPT-OSS-120B | Qwen3.5-35BA3B | Qwen3.6-35BA3B | Gemma4-26BA4B | Gemma4-26BA4B (QAT) | Gemma4-12B |
-|------|-------------|--------------|---------------|---------------|---------------|---------------------|------------|
-| API生成速度 (medium) | 154 tok/s | 12.62 tok/s | 57.77 tok/s | 57.03 tok/s | 44.06 tok/s | **52.6 tok/s** | 91.2 tok/s |
-| 首Token延迟 | 48 ms | 726 ms | 73 ms | 80 ms | 160 ms | **76 ms** | 365 ms |
-| Prefill 速度 (4K prompt) | **8198 tok/s** | **672 tok/s** | **1612 tok/s** | **1634 tok/s** | **2101 tok/s** | **2645 tok/s** | **3058 tok/s** |
-| 量化格式 | Q4_K_M | MXFP4 | Q4_K_M | Q4_K_M | Q4_K_M | UD-Q4_K_XL (QAT) | Q4_K_M |
-| 发布日期 | 2025-08-05 | 2025-08-05 | 2026-02-24 | 2026-04-16 | 2026-04-02 | 2026-06-09 | 2026-06-03 |
-| 参数量 | 21B (3.6B活跃) | 117B (5.1B活跃) | 35B (3B活跃) | 35B (3B活跃) | 26B (3.8B活跃) | 26B (3.8B活跃) | 12B (dense) |
-| 模型架构 | MoE Transformer | MoE Transformer | Hybrid Gated DeltaNet + MoE | Hybrid Gated DeltaNet + MoE | MoE Transformer | MoE Transformer | Dense Unified |
-| 上下文长度 | 128K | 128K | 256K | 256K | 256K | 256K | 256K |
-| 内存占用 | ~12GB | ~63GB | 22GB | 22GB | 17GB | ~15GB | ~13GB |
-| 许可证 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
-| 多模态支持 | - | - | 图像 | 图像 | 图像 | 图像 | 图像+音频 |
-| thinking 模式 | ✅ Harmony | ✅ Harmony | ✅(可禁用) | ✅(可禁用) | ✅(可禁用) | ✅(可禁用) | ✅(可禁用) |
-| SWE-bench (代码问题) | 60.7% | ~62% | 69.2% | 73.4% | 71.0% | ~ | ~70% |
-| AIME (竞赛数学) | 96%/98.7% | - | 91.0%/91.0% | 92.7%/92.7% | 88.3% | ~ | ~88% |
-| MMLU (知识测试) | 85.3% | - | 85.3% | 86.1% | 85.2% | ~ | ~85.5% |
+| 指标 | GPT-OSS-20B | GPT-OSS-120B | Qwen3.5-35BA3B | Qwen3.6-35BA3B | Gemma4-26BA4B | Gemma4-26BA4B (QAT) | Gemma4-12B | Qwen-AgentWorld-35B-A3B |
+|------|-------------|--------------|---------------|---------------|---------------|---------------------|------------|------------------------|
+| API生成速度 (medium) | 154 tok/s | 12.62 tok/s | 57.77 tok/s | 57.03 tok/s | 44.06 tok/s | **52.6 tok/s** | 91.2 tok/s | 62.2 tok/s |
+| 首Token延迟 | 48 ms | 726 ms | 73 ms | 80 ms | 160 ms | **76 ms** | 365 ms | 46 ms |
+| Prefill 速度 (4K prompt) | **8198 tok/s** | **672 tok/s** | **1612 tok/s** | **1634 tok/s** | **2101 tok/s** | **2645 tok/s** | **3058 tok/s** | 1747 tok/s |
+| 量化格式 | Q4_K_M | MXFP4 | Q4_K_M | Q4_K_M | Q4_K_M | UD-Q4_K_XL (QAT) | Q4_K_M | Q4_K_M |
+| 发布日期 | 2025-08-05 | 2025-08-05 | 2026-02-24 | 2026-04-16 | 2026-04-02 | 2026-06-09 | 2026-06-03 | 2026-06-24 |
+| 参数量 | 21B (3.6B活跃) | 117B (5.1B活跃) | 35B (3B活跃) | 35B (3B活跃) | 26B (3.8B活跃) | 26B (3.8B活跃) | 12B (dense) | 35B (3B活跃) |
+| 模型架构 | MoE Transformer | MoE Transformer | Hybrid Gated DeltaNet + MoE | Hybrid Gated DeltaNet + MoE | MoE Transformer | MoE Transformer | Dense Unified | Hybrid Gated DeltaNet + MoE |
+| 上下文长度 | 128K | 128K | 256K | 256K | 256K | 256K | 256K | 256K |
+| 内存占用 | ~12GB | ~63GB | 22GB | 22GB | 17GB | ~15GB | ~13GB | ~21GB |
+| 许可证 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
+| 多模态支持 | - | - | 图像 | 图像 | 图像 | 图像 | 图像+音频 | 图像 |
+| thinking 模式 | ✅ Harmony | ✅ Harmony | ✅(可禁用) | ✅(可禁用) | ✅(可禁用) | ✅(可禁用) | ✅(可禁用) | ✅(可禁用) |
+| SWE-bench (代码问题) | 60.7% | ~62% | 69.2% | 73.4% | 71.0% | ~ | ~70% | - (world model) |
+| AIME (竞赛数学) | 96%/98.7% | - | 91.0%/91.0% | 92.7%/92.7% | 88.3% | ~ | ~88% | - (world model) |
+| MMLU (知识测试) | 85.3% | - | 85.3% | 86.1% | 85.2% | ~ | ~85.5% | - (world model) |
 
 **QAT 说明**：Gemma 4 26B QAT 版使用 Unsloth UD-Q4_K_XL 动态量化，文件更小（14.2GB vs 原版 17GB），生成速度快 ~19%（52.6 vs 44.1 tok/s），Prefill 快 ~26%（2645 vs 2101 tok/s）。
 
@@ -66,6 +66,7 @@ docker run --rm \
 | gemma4-26BA4B | 8085 | 256K | `./run.sh gemma4-26BA4B up -d` |
 | gemma4-12b | 8086 | 256K | `./run.sh gemma4-12b up -d` |
 | gemma4-26b-qat | 8087 | 256K | `./run.sh gemma4-26b-qat up -d` |
+| agentworld-35b | 8088 | 256K | `./run.sh agentworld-35b up -d` |
 
 ### 注意事项
 
@@ -153,6 +154,7 @@ curl -X POST http://localhost:8081/v1/chat/completions \
 | **Gemma 4 12B/26B/26B-QAT** | ❌ 不识别（实测忽略） | ✅ 开关式 | `enable_thinking: false` |
 | **Qwen3.5-35BA3B** | ❌ 不识别 | ✅ 开关式 | `enable_thinking: false` |
 | **Qwen3.6-35BA3B** | ❌ 不识别 | ✅ 开关式 | `enable_thinking: false` |
+| **Qwen-AgentWorld-35B-A3B** | ❌ 不识别 | ✅ 开关式 | `enable_thinking: false` |
 
 **结论**：在本仓库使用 llama.cpp 部署时，**只有 GPT-OSS 系列能用 `reasoning_effort`，其他模型必须用 `enable_thinking: false`**。
 
@@ -173,6 +175,7 @@ opencode `models.<id>.options` 中的字段不再传递到 API 调用（[Issue #
 | `llama-qwen35-35BA3B` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}` | 开启 thinking |
 | `llama-qwen36-35BA3B` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}` | 开启 thinking |
 | `llama-gemma4-26b-qat` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}` | 开启 thinking（端口 8087）|
+| `llama-agentworld-35b` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}` | 开启 thinking（端口 8088）|
 
 > `enable_thinking` 在 llama.cpp 9519+ 开始废弃，改用 `--reasoning on/off`。当前仍生效。
 
@@ -216,6 +219,7 @@ environment:
 | `llama-cpp-gemma4` | 8085 | `gemma-4-26B-A4B-it-Q4_K_M.gguf` | `gemma4-26b-a4b` | 262144 | text+image |
 | `llama-cpp-gemma4-12b` | 8086 | `gemma-4-12b-it-Q4_K_M.gguf` | `gemma-4-12b` | 131072 | text+image |
 | `llama-cpp-gemma4-26b-qat` | 8087 | `gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf` | `gemma4-26b-qat` | 262144 | text+image |
+| `llama-cpp-agentworld-35b` | 8088 | `Qwen-AgentWorld-35B-A3B-Q4_K_M.gguf` | `agentworld-35b` | 262144 | text+image |
 
 如需临时切换 thinking/reasoning：
 

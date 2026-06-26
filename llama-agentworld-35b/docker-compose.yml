@@ -1,0 +1,39 @@
+services:
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llama-agentworld-35b
+    user: "${HOST_UID}:${HOST_GID}"
+    ports:
+      - "8088:8080"
+    volumes:
+      - ./models:/models:ro
+    environment:
+      - LLAMA_ARG_MODEL=/models/Qwen-AgentWorld-35B-A3B-Q4_K_M.gguf
+      - LLAMA_ARG_FIT=on
+      - LLAMA_ARG_CTX_SIZE=262144
+      - LLAMA_ARG_N_THREADS=12
+      - LLAMA_ARG_N_THREADS_BATCH=14
+      - LLAMA_ARG_MLOCK=on
+      - LLAMA_ARG_FLASH_ATTN=on
+      - LLAMA_ARG_NO_MMAP=true
+      - LLAMA_ARG_CTK=q8_0
+      - LLAMA_ARG_CTV=q8_0
+      - LLAMA_ARG_MMPROJ=/models/mmproj-F16.gguf
+      - LLAMA_ARG_MMPROJ_OFFLOAD=off
+      - GGML_CUDA_GRAPH_OPT=1
+      - LLAMA_SET_ROWS=1
+      - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}'
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s

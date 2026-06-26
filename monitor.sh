@@ -14,6 +14,7 @@ if [ -z "$PROJECT" ] || [ -z "$MODEL" ]; then
     echo "  qwen35-35BA3B     - Qwen3.5 35B"
     echo "  qwen36-35BA3B     - Qwen3.6 35B"
     echo "  gemma4-26BA4B     - Gemma4 26B"
+    echo "  agentworld-35b    - Qwen-AgentWorld 35B"
     echo ""
     echo "Example:"
     echo "  ./monitor.sh gpt-oss-20b gpt-oss-20b-Q4_K_M.gguf"

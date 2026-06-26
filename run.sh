@@ -17,6 +17,7 @@ if [ -z "$PROJECT" ]; then
     echo "  qwen36-35BA3B     - Qwen3.6 35B (port 8084)"
     echo "  gemma4-26BA4B     - Gemma4 26B (port 8085)"
     echo "  gemma4-12b        - Gemma4 12B (port 8086)"
+    echo "  agentworld-35b    - Qwen-AgentWorld 35B (port 8088)"
     echo ""
     echo "Example:"
     echo "  ./run.sh gpt-oss-20b up -d"
