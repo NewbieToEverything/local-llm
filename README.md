@@ -39,16 +39,23 @@ cd download-helper
 docker build -t model-downloader:custom .
 
 docker run --rm \
+  --network host \
   -v xxx/local-llm/llama-xxx/models:/models \
   -u "$(id -u):$(id -g)" \
   -e HF_ENDPOINT=https://hf-mirror.com \
+  -e HTTP_PROXY=http://127.0.0.1:10808 \
+  -e HTTPS_PROXY=http://127.0.0.1:10808 \
   model-downloader:custom \
   bash -c "/hfd.sh unsloth/ModelRepoID --include ModelFileName --local-dir /models -x 10"
 ```
 
-**参数**：`-x 10` 并发数（1-10）。`HF_ENDPOINT` 使用国内镜像加速。
+**参数**：
+- `--network host`：必需，使容器能访问宿主的代理（`127.0.0.1` 指向宿主而非容器自身）
+- `-x 10`：并发数（1-10）
+- `HF_ENDPOINT=https://hf-mirror.com`：国内镜像加速，网络通畅时也可去掉直连 Hugging Face
+- `HTTP_PROXY`/`HTTPS_PROXY`：若宿主机有代理，可显著加速国际下载
 
-备选方案：使用 `curlimages/curl` 容器直接下载 GGUF 文件（见各 docker-compose.yml 中已有注释）。
+**下载后验证**：`ls -lh` 检查文件大小是否与 Hugging Face 页面一致。远小于预期则可能是 CDN 异常，加 `--network host` 重试。
 
 ```bash
 # 监控下载进度
