@@ -28,8 +28,6 @@
 | AIME (竞赛数学) | 96%/98.7% | - | 91.0%/91.0% | 92.7%/92.7% | 88.3% | ~ | ~88% | - (world model) |
 | MMLU (知识测试) | 85.3% | - | 85.3% | 86.1% | 85.2% | ~ | ~85.5% | - (world model) |
 
-**QAT 说明**：Gemma 4 26B QAT 版使用 Unsloth UD-Q4_K_XL 动态量化，文件更小（14.2GB vs 原版 17GB），生成速度快 ~19%（52.6 vs 44.1 tok/s），Prefill 快 ~26%（2645 vs 2101 tok/s）。
-
 ## 快速开始
 
 ### 下载模型文件
@@ -58,7 +56,7 @@ docker run --rm \
 **下载后验证**：`ls -lh` 检查文件大小是否与 Hugging Face 页面一致。远小于预期则可能是 CDN 异常，加 `--network host` 重试。
 
 ```bash
-# 监控下载进度
+# 监控下载进度（可选）
 ./monitor.sh gpt-oss-20b gpt-oss-20b-Q4_K_M.gguf
 ```
 
@@ -70,17 +68,10 @@ docker run --rm \
 | gpt-oss-120b | 8082 | 128K | `./run.sh gpt-oss-120b up -d` |
 | qwen35-35BA3B | 8083 | 256K | `./run.sh qwen35-35BA3B up -d` |
 | qwen36-35BA3B | 8084 | 256K | `./run.sh qwen36-35BA3B up -d` |
-| gemma4-26BA4B | 8085 | 256K | `./run.sh gemma4-26BA4B up -d` |
-| gemma4-12b | 8086 | 256K | `./run.sh gemma4-12b up -d` |
-| gemma4-26b-qat | 8087 | 256K | `./run.sh gemma4-26b-qat up -d` |
 | agentworld-35b | 8088 | 256K | `./run.sh agentworld-35b up -d` |
-
-### 注意事项
-
-- 不要同时运行多个大模型，需按需启动/停止
-- `run.sh` 已自动匹配宿主机的 UID:GID
-- 不要同时启动 `gemma4-12b`（~13GB）和 `gemma4-26BA4B`（~17GB），单卡 16GB 显存不足
-- 镜像 `ghcr.io/ggml-org/llama.cpp:server-cuda` 需保持较新版本，更新：`docker pull ghcr.io/ggml-org/llama.cpp:server-cuda`
+| gemma4-12b | 8086 | 256K | `./run.sh gemma4-12b up -d` |
+| gemma4-26BA4B | 8085 | 256K | `./run.sh gemma4-26BA4B up -d` |
+| gemma4-26b-qat | 8087 | 256K | `./run.sh gemma4-26b-qat up -d` |
 
 ## API 调用
 
@@ -93,6 +84,7 @@ docker run --rm \
 - LLAMA_ARG_MMPROJ_OFFLOAD=off
 ```
 
+测试命令：
 ```bash
 curl -X POST http://localhost:8086/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -109,12 +101,7 @@ curl -X POST http://localhost:8086/v1/chat/completions \
 
 ### thinking 模式
 
-Gemma 4 / Qwen 3.x 默认开启 thinking，会在回答前输出 `reasoning_content`。如需关闭，传：
-
-```json
-{"chat_template_kwargs": {"enable_thinking": false}}
-```
-
+Gemma 4 / Qwen 3.x 默认开启 thinking，会在回答前输出 `reasoning_content`。如需关闭，需使用如下命令：
 ```bash
 curl -X POST http://localhost:8086/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -125,16 +112,16 @@ curl -X POST http://localhost:8086/v1/chat/completions \
   }'
 ```
 
-### GPT-OSS 系列（Harmony 格式）
+### GPT-OSS 系列的 reasoning_effort
 
 GPT-OSS 20B/120B 使用 OpenAI 独有的 **Harmony** chat format，行为与其他模型不同：
 
 - 始终会生成内部推理（`reasoning_content`），**不能完全关闭**
-- 推理强度通过 `reasoning_effort: "low" | "medium" | "high"` 控制
+- 推理强度通过 `reasoning_effort: "low" | "medium" | "high"` 控制，`reasoning_effort` **不影响生成速度**（GPU 算力是瓶颈），只影响 reasoning 长度
 - 响应分三个 channel：`analysis`（内部思考）、`commentary`（工具调用）、`final`（最终回复）
-- `reasoning_effort` **不影响生成速度**（GPU 算力是瓶颈），只影响 reasoning 长度
 - 若需要"快速回答"，用 `low` + 较小 `max_tokens`（如 100）；复杂任务用 `high` + 较大 `max_tokens`（如 800）
 
+测试命令：
 ```bash
 curl -X POST http://localhost:8081/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -145,48 +132,20 @@ curl -X POST http://localhost:8081/v1/chat/completions \
   }'
 ```
 
-性能对比（"用一句话介绍你自己"，warmup 后 3 次平均）：
-
-| 模型 | low | medium | high | reasoning 长度差异 |
-|------|-----|---------------|------|---------------------|
-| GPT-OSS-20B  | 155 tok/s | 154 tok/s | 150 tok/s | 30 → 310 → 650 字符 |
-| GPT-OSS-120B | 12.72 tok/s | 12.62 tok/s | 12.54 tok/s | 38 → 284 → 659 字符 |
-| **Gemma4-26B-QAT** | - | **52.6 tok/s** | - | 开关式 thinking（同原版）|
-
-### reasoning_effort 支持矩阵
-
-| 模型 | 原生支持 `reasoning_effort` | 原生支持 `enable_thinking` | 推荐参数 |
-|------|---------------------------|--------------------------|----------|
-| **GPT-OSS-20B/120B** | ✅ 是（Harmony，3 档可调） | ❌ 无效（参数名错） | `reasoning_effort: low/medium/high` |
-| **Gemma 4 12B/26B/26B-QAT** | ❌ 不识别（实测忽略） | ✅ 开关式 | `enable_thinking: false` |
-| **Qwen3.5-35BA3B** | ❌ 不识别 | ✅ 开关式 | `enable_thinking: false` |
-| **Qwen3.6-35BA3B** | ❌ 不识别 | ✅ 开关式 | `enable_thinking: false` |
-| **Qwen-AgentWorld-35B-A3B** | ❌ 不识别 | ✅ 开关式 | `enable_thinking: false` |
-
-**结论**：在本仓库使用 llama.cpp 部署时，**只有 GPT-OSS 系列能用 `reasoning_effort`，其他模型必须用 `enable_thinking: false`**。
-
 ## opencode 集成
 
-### 关键：thinking/reasoning 通过服务端参数控制
+### 关键：thinking/reasoning_effort 通过服务端参数控制
 
-opencode `models.<id>.options` 中的字段不再传递到 API 调用（[Issue #20815](https://github.com/anomalyco/opencode/issues/20815)），所有 thinking/reasoning 控制必须在 `docker-compose.yml` 中通过 `LLAMA_ARG_CHAT_TEMPLATE_KWARGS` 实现。好处是不依赖 opencode 版本，所有请求（curl、opencode、agent-browser）行为一致。代价是调整需重启容器。
-
-### llama.cpp 端配置
+opencode `models.<id>.options` 中的字段不再传递到 API 调用（[Issue #20815](https://github.com/anomalyco/opencode/issues/20815)），所有 thinking/reasoning_effort 控制必须在 `docker-compose.yml` 中通过 `LLAMA_ARG_CHAT_TEMPLATE_KWARGS` 环境变量来控制（见下表）。好处是不依赖 opencode 版本，所有请求（curl、opencode、agent-browser）行为一致，代价是调整需重启容器。
 
 | 模型 | 环境变量值 | 含义 |
 |------|-----------|------|
-| `llama-gpt-oss-20b` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"reasoning_effort": "high"}` | Harmony 推理深度 high |
-| `llama-gpt-oss-120b` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"reasoning_effort": "high"}` | Harmony 推理深度 high |
+| `llama-gpt-oss-20b` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"reasoning_effort": "high"}` | 推理深度 high |
 | `llama-gemma4-26BA4B` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}` | 开启 thinking |
-| `llama-gemma4-12b` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}` | 开启 thinking |
-| `llama-qwen35-35BA3B` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}` | 开启 thinking |
-| `llama-qwen36-35BA3B` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}` | 开启 thinking |
-| `llama-gemma4-26b-qat` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}` | 开启 thinking（端口 8087）|
-| `llama-agentworld-35b` | `LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}` | 开启 thinking（端口 8088）|
 
 > `enable_thinking` 在 llama.cpp 9519+ 开始废弃，改用 `--reasoning on/off`。当前仍生效。
 
-**YAML 语法注意**：JSON 值必须用**外层单引号**包裹，否则 docker compose 会解析为 map：
+**注意**：JSON 值必须用**外层单引号**包裹，否则 docker compose 会解析为 map：
 
 ```yaml
 environment:
@@ -196,7 +155,7 @@ environment:
 
 ### opencode 端配置
 
-> ⚠️ opencode 默认认为自定义 provider 只支持 text 输入。**不声明 `modalities` 则拖入图片会报错**：`ERROR: Cannot read "clipboard" (this model does not support image input).` 详见 [Issue #9897](https://github.com/anomalyco/opencode/issues/9897)。
+> ⚠️ opencode 默认认为自定义 provider 只支持 text 输入。**不声明 `modalities` 无法开启多模态**（[Issue #9897](https://github.com/anomalyco/opencode/issues/9897)）。
 
 添加到 `~/.config/opencode/opencode.json`。模板（替换端口和模型名即可）：
 
@@ -228,41 +187,8 @@ environment:
 | `llama-cpp-gemma4-26b-qat` | 8087 | `gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf` | `gemma4-26b-qat` | 262144 | text+image |
 | `llama-cpp-agentworld-35b` | 8088 | `Qwen-AgentWorld-35B-A3B-Q4_K_M.gguf` | `agentworld-35b` | 262144 | text+image |
 
-如需临时切换 thinking/reasoning：
+## 注意事项
 
-```bash
-# 1. 编辑对应 docker-compose.yml，修改 LLAMA_ARG_CHAT_TEMPLATE_KWARGS
-# 2. 重启容器
-cd llama-gemma4-12b && docker compose up -d
-# 3. 无需重启 opencode
-```
-
-### 验证服务参数生效
-
-```bash
-# 检查容器内环境变量
-docker exec llama-gemma4-12b cat /proc/1/environ | tr '\0' '\n' | grep CHAT_TEMPLATE
-
-# 确认 thinking 已关闭（reasoning_content 为空）
-curl -s -X POST http://localhost:8086/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gemma-4-12b-it-Q4_K_M.gguf","messages":[{"role":"user","content":"A train travels 60 km in 50 minutes. How long will it take to travel 150 km?"}],"max_tokens":800,"temperature":0.1}' \
-  | python3 -c "import json,sys; r=json.load(sys.stdin); m=r['choices'][0]['message']; print('reasoning_content:', m.get('reasoning_content', '(None)'))"
-```
-
-如果 `reasoning_content` 为 `(None)`，说明 thinking 已被服务端参数关闭。
-
-## 附录
-
-- **旧数据 vs 新数据**：旧版 llama.cpp 镜像测试时 GPT-OSS-20B 约 228 tok/s，新版（0.0.9519）约 154 tok/s（medium）。下降主要源自新版镜像的 Harmony 解析开销。GPT-OSS-120B 稳定（12.62 vs 12.34 tok/s）。QAT 速度见[主表](#可用模型及表现)。
-- **vLLM vs llama.cpp**：vLLM 内置了 `reasoning_effort` → `enable_thinking` 自动映射，llama.cpp 没有此逻辑，因此只有 GPT-OSS（Harmony）原生支持 `reasoning_effort`。
-
-## FAQ
-
-**显存不足怎么办？**
-按需启动，不要同时运行多个容器。使用显存较小的模型（如 Gemma4-12B 约 13GB）。
-
-**如何更新 llama.cpp 镜像？**
-```bash
-docker pull ghcr.io/ggml-org/llama.cpp:server-cuda
-```
+- 不要同时运行多个大模型，需按需启动/停止
+- `run.sh` 会自动匹配宿主机的 UID:GID
+- 镜像 `ghcr.io/ggml-org/llama.cpp:server-cuda` 需保持较新版本
