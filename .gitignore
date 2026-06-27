@@ -4,3 +4,5 @@
 # 各项目的 models 目录
 */models/
 .env
+
+AGENTS.md
