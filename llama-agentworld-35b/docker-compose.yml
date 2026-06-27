@@ -4,7 +4,7 @@ services:
     container_name: llama-agentworld-35b
     user: "${HOST_UID}:${HOST_GID}"
     ports:
-      - "8088:8080"
+      - "8084:8080"
     volumes:
       - ./models:/models:ro
     environment:

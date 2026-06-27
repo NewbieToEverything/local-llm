@@ -4,7 +4,7 @@ services:
     container_name: llama-qwen36-35BA3B
     user: "${HOST_UID}:${HOST_GID}"
     ports:
-      - "8084:8080"
+      - "8085:8080"
     volumes:
       - ./models:/models:ro
     environment:

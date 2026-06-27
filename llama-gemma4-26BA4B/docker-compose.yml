@@ -4,7 +4,7 @@ services:
     container_name: llama-gemma4-26BA4B
     user: "${HOST_UID}:${HOST_GID}"
     ports:
-      - "8085:8080"
+      - "8087:8080"
     volumes:
       - ./models:/models:ro
     environment:
