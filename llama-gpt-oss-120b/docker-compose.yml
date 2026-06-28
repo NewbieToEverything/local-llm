@@ -22,6 +22,7 @@ services:
       - LLAMA_ARG_CTK=q8_0
       - LLAMA_ARG_CTV=q8_0
       - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"reasoning_effort": "high"}'
+    command: ["--temp", "1.0", "--top-p", "1.0", "--top-k", "0", "--repeat-penalty", "1.0"]
     deploy:
       resources:
         reservations:

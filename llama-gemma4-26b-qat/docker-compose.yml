@@ -19,6 +19,7 @@ services:
       - LLAMA_ARG_CTK=q8_0
       - LLAMA_ARG_CTV=q8_0
       - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}'
+    command: ["--temp", "1.2", "--top-p", "0.95", "--top-k", "64"]
     deploy:
       resources:
         reservations:

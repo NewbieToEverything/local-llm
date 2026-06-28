@@ -66,6 +66,47 @@ docker run --rm \
 | gemma4-26BA4B | 8087 | 256K | `./run.sh gemma4-26BA4B up -d` |
 | gemma4-26b-qat | 8088 | 256K | `./run.sh gemma4-26b-qat up -d` |
 
+## 采样参数配置
+
+各模型的 `command:` 字段通过 CLI 参数设置采样参数，缓解模型生产重复内容（过量重采样）的问题。opencode 等客户端未显式传参时，均使用这些默认值。
+
+> `LLAMA_ARG_*` 环境变量中仅 `LLAMA_ARG_TOP_K` 被注册，其他采样参数（`--temp`、`--top-p`、`--repeat-penalty`、`--presence-penalty`、`--frequency-penalty`）不支持 env var，必须通过 CLI 参数传入。
+
+### 各模型配置
+
+| 模型 | 端口 | command: |
+|------|------|----------|
+| gpt-oss-20b | 8081 | `--temp 1.0 --top-p 1.0 --top-k 0 --repeat-penalty 1.0` |
+| gpt-oss-120b | 8082 | 同上 |
+| qwen35-35BA3B | 8083 | `--temp 1.0 --top-p 0.95 --top-k 20 --repeat-penalty 1.0 --presence-penalty 1.5` |
+| agentworld-35b | 8084 | `--temp 0.6 --top-p 0.95 --top-k 20` |
+| qwen36-35BA3B | 8085 | `--temp 1.0 --top-p 0.95 --top-k 20 --repeat-penalty 1.0 --presence-penalty 1.5` |
+| gemma4-12b | 8086 | `--temp 1.2 --top-p 0.95 --top-k 64` |
+| gemma4-26BA4B | 8087 | 同上 |
+| gemma4-26b-qat | 8088 | 同上 |
+
+### 说明
+
+- **Qwen 3.x**（`qwen35`、`qwen36`）：官方推荐 `presence_penalty=1.5` + `repeat_penalty=1.0`（禁用重复惩罚，转而使用存在惩罚）来抑制重复
+- **Gemma 4**（`gemma4-12b`、`gemma4-26BA4B`、`gemma4-26b-qat`）：`--temp 1.2` 略高于默认值（0.8）以减少重复；`top_k=64` 为 Gemma 官方推荐值
+- **GPT-OSS**（`gpt-oss-20b`、`gpt-oss-120b`）：官方要求 `top_k=0`（禁用）、`top_p=1.0`（禁用 nucleus sampling），以确保 Harmony format 的输出分布正确
+- **Qwen-AgentWorld**（`agentworld-35b`）：基于 Qwen 架构，使用较低温度 0.6 以适应 agent 场景
+
+### 覆盖默认值
+
+客户端可以通过 API 请求体覆盖任一参数：
+
+```bash
+curl -X POST http://localhost:8085/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "你好"}],
+    "temperature": 0.8,
+    "top_p": 0.9,
+    "presence_penalty": 0.0
+  }'
+```
+
 ## API 调用
 
 ### 多模态（图像）
