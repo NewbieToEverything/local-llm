@@ -11,19 +11,18 @@ services:
       - LLAMA_ARG_MODEL=/models/Qwen-AgentWorld-35B-A3B-Q4_K_M.gguf
       - LLAMA_ARG_FIT=on
       - LLAMA_ARG_CTX_SIZE=262144
-      - LLAMA_ARG_N_THREADS=12
-      - LLAMA_ARG_N_THREADS_BATCH=14
+      - LLAMA_ARG_THREADS=12
       - LLAMA_ARG_MLOCK=on
       - LLAMA_ARG_FLASH_ATTN=on
-      - LLAMA_ARG_NO_MMAP=true
-      - LLAMA_ARG_CTK=q8_0
-      - LLAMA_ARG_CTV=q8_0
+      - LLAMA_ARG_MMAP=0
+      - LLAMA_ARG_CACHE_TYPE_K=q8_0
+      - LLAMA_ARG_CACHE_TYPE_V=q8_0
       - LLAMA_ARG_MMPROJ=/models/mmproj-F16.gguf
       - LLAMA_ARG_MMPROJ_OFFLOAD=off
       - GGML_CUDA_GRAPH_OPT=1
       - LLAMA_SET_ROWS=1
       - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}'
-    command: ["--temp", "0.6", "--top-p", "0.95", "--top-k", "20"]
+    command: ["--temp", "0.6", "--top-p", "0.95", "--top-k", "20", "--threads-batch", "14"]
     deploy:
       resources:
         reservations:

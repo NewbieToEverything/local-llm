@@ -13,11 +13,11 @@ services:
       - LLAMA_ARG_MMPROJ_OFFLOAD=off
       - LLAMA_ARG_FIT=on
       - LLAMA_ARG_CTX_SIZE=262144
-      - LLAMA_ARG_N_THREADS=10
+      - LLAMA_ARG_THREADS=10
       - LLAMA_ARG_FLASH_ATTN=on
-      - LLAMA_ARG_NO_MMAP=true
-      - LLAMA_ARG_CTK=q8_0
-      - LLAMA_ARG_CTV=q8_0
+      - LLAMA_ARG_MMAP=0
+      - LLAMA_ARG_CACHE_TYPE_K=q8_0
+      - LLAMA_ARG_CACHE_TYPE_V=q8_0
       - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}'
     command: ["--temp", "1.2", "--top-p", "0.95", "--top-k", "64"]
     deploy:
