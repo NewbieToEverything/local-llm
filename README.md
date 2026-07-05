@@ -33,7 +33,7 @@
 
 ```bash
 cd download-helper
-docker build -t model-downloader:custom .
+docker build -t download-helper:latest .
 
 docker run --rm \
   --network host \
@@ -42,7 +42,7 @@ docker run --rm \
   -e HF_ENDPOINT=https://hf-mirror.com \
   -e HTTP_PROXY=http://127.0.0.1:PORT \
   -e HTTPS_PROXY=http://127.0.0.1:PORT \
-  model-downloader:custom \
+  download-helper:latest \
   bash -c "/hfd.sh unsloth/ModelRepoID --include ModelFileName --local-dir /models -x 10"
 ```
 
