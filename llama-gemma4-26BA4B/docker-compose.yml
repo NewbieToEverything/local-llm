@@ -19,7 +19,7 @@ services:
       - LLAMA_ARG_CACHE_TYPE_K=q8_0
       - LLAMA_ARG_CACHE_TYPE_V=q8_0
       - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}'
-    command: ["--temp", "1.2", "--top-p", "0.95", "--top-k", "64"]
+    command: ["--temp", "1.0", "--top-p", "0.95", "--top-k", "64", "--repeat-penalty", "1.05"]
     deploy:
       resources:
         reservations:

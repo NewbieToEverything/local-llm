@@ -22,7 +22,7 @@ services:
       - GGML_CUDA_GRAPH_OPT=1
       - LLAMA_SET_ROWS=1
       - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}'
-    command: ["--temp", "0.6", "--top-p", "0.95", "--top-k", "20", "--threads-batch", "14"]
+    command: ["--temp", "0.6", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.05", "--threads-batch", "14"]
     deploy:
       resources:
         reservations:
