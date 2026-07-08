@@ -13,11 +13,16 @@ services:
       - LLAMA_ARG_MMPROJ_OFFLOAD=off
       - LLAMA_ARG_FIT=on
       - LLAMA_ARG_CTX_SIZE=262144
+      - LLAMA_ARG_N_PARALLEL=1
       - LLAMA_ARG_THREADS=10
       - LLAMA_ARG_FLASH_ATTN=on
       - LLAMA_ARG_MMAP=0
       - LLAMA_ARG_CACHE_TYPE_K=q8_0
       - LLAMA_ARG_CACHE_TYPE_V=q8_0
+      - LLAMA_ARG_UBATCH=1024
+      - LLAMA_ARG_TOP_K=64
+      - GGML_CUDA_GRAPH_OPT=1
+      - LLAMA_SET_ROWS=1
       - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}'
     command: ["--temp", "1.0", "--top-p", "0.95", "--top-k", "64", "--repeat-penalty", "1.05"]
     deploy:
@@ -34,3 +39,21 @@ services:
       timeout: 10s
       retries: 3
       start_period: 300s
+
+  codex-responses-proxy:
+    image: python:3.13-slim
+    container_name: codex-gemma4-26BA4B-responses-proxy
+    network_mode: host
+    volumes:
+      - ../codex-llama-proxy/proxy.py:/app/proxy.py:ro
+    command:
+      - python3
+      - /app/proxy.py
+      - --listen
+      - 127.0.0.1:18087
+      - --upstream
+      - http://127.0.0.1:8087
+    depends_on:
+      llama-server:
+        condition: service_healthy
+    restart: unless-stopped
