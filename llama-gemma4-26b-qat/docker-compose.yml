@@ -7,6 +7,7 @@ services:
       - "8088:8080"
     volumes:
       - ./models:/models:ro
+      - ./chat_template.fixed.jinja:/etc/chat_template.fixed.jinja:ro
     environment:
       - LLAMA_ARG_MODEL=/models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf
       - LLAMA_ARG_MMPROJ=/models/mmproj-F16.gguf
@@ -18,8 +19,19 @@ services:
       - LLAMA_ARG_MMAP=0
       - LLAMA_ARG_CACHE_TYPE_K=q8_0
       - LLAMA_ARG_CACHE_TYPE_V=q8_0
-      - 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": true}'
-    command: ["--temp", "1.0", "--top-p", "0.95", "--top-k", "64", "--repeat-penalty", "1.05"]
+    command:
+      - "--chat-template-file"
+      - "/etc/chat_template.fixed.jinja"
+      - "--reasoning"
+      - "on"
+      - "--temp"
+      - "1.0"
+      - "--top-p"
+      - "0.95"
+      - "--top-k"
+      - "64"
+      - "--repeat-penalty"
+      - "1.05"
     deploy:
       resources:
         reservations:
