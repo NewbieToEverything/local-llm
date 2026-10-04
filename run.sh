@@ -31,11 +31,12 @@ shift
 
 BASE_DIR="$(dirname "$0")"
 if [ -d "$BASE_DIR/$PROJECT" ]; then
-    cd "$BASE_DIR/$PROJECT"
+    DIR="$PROJECT"
 else
-    cd "$BASE_DIR/llama-$PROJECT"
+    DIR="llama-$PROJECT"
 fi
+cd "$BASE_DIR/$DIR" || exit 1
 
-echo "Running llama-$PROJECT with UID=$HOST_UID GID=$HOST_GID"
+echo "Running $DIR with UID=$HOST_UID GID=$HOST_GID"
 
 docker compose "$@"
