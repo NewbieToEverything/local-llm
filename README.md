@@ -181,9 +181,18 @@ curl -X POST http://localhost:8081/v1/chat/completions \
 
 ## opencode 集成
 
-### 服务端：thinking/reasoning_effort
+### thinking / reasoning 的控制位置
 
-opencode `models.<id>.options` 中的字段不再传递到 API 调用（[Issue #20815](https://github.com/anomalyco/opencode/issues/20815)），所有 thinking/reasoning_effort 控制必须在 `docker-compose.yml` 中通过 `LLAMA_ARG_CHAT_TEMPLATE_KWARGS` 环境变量来控制（见下表）。好处是不依赖 opencode 版本，所有请求（curl、opencode、agent-browser）行为一致，代价是调整需重启容器。
+各 provider 不一样，取决于服务的 API 是否接受**请求级**参数：
+
+| Provider | 控制位置 | 方式 |
+|----------|---------|------|
+| llama.cpp 系列 | **服务端** | `docker-compose.yml` 里的 `LLAMA_ARG_CHAT_TEMPLATE_KWARGS`（见下表），调整需重启容器 |
+| Strata | **客户端** | model 条目的 `options.reasoningEffort`，改 `~/.config/opencode/opencode.json` 后 `opencode reload` |
+
+> **实测记录**：`models.<id>.options` 是否下发到 API，在 opencode v2.0.22 + Strata 上是**会下发的**——`options.reasoningEffort: "none"` 时服务端日志直接进入 `answering`（无 `thinking` 阶段），设为 `"high"` 时先出现 `thinking: 4552 of max 32768 tokens`。历史上 llama.cpp 侧受 [Issue #20815](https://github.com/anomalyco/opencode/issues/20815) 影响，故仍沿用服务端写法（未在 v2.0.22 上复测）。
+
+llama.cpp 系列的环境变量：
 
 | 模型 | 环境变量值 | 含义 |
 |------|-----------|------|
@@ -200,23 +209,49 @@ environment:
   - LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking": false}    # ❌ 被解析为 map
 ```
 
-### opencode.json
+### provider 条目模板
 
-添加到 `~/.config/opencode/opencode.json`。模板（替换端口和模型名即可）：
+添加到 `~/.config/opencode/opencode.json` 的 `providers` 下（字段名与现有 8 个 llama.cpp provider 一致，实际生效已验证）：
 
 ```json
 "llama-cpp-xxxx": {
-  "npm": "@ai-sdk/openai-compatible",
+  "package": "@opencode/ai/providers/openai-compatible",
   "name": "llama.cpp (模型名称)",
-  "options": { "baseURL": "http://localhost:PORT/v1", "apiKey": "anything" },
+  "settings": { "baseURL": "http://localhost:PORT/v1", "apiKey": "anything" },
   "models": {
-    "模型文件名.gguf": {
-      "name": "模型ID",
-      "modalities": { "input": ["text"], "output": ["text"] },
+    "服务端模型ID": {
+      "name": "显示名",
+      "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
       "limit": { "context": 262144, "output": 8192 }
     }
   }
 }
 ```
 
-**注意**：多模态模型需改 `modalities.input` 为 `["text", "image"]`，opencode 默认认为自定义 provider 只支持 text 输入。**不声明 `modalities` 无法开启多模态**（[Issue #9897](https://github.com/anomalyco/opencode/issues/9897)）
+改完配置必须执行 `opencode reload`，否则运行中的 server 仍用旧配置（模型不会出现在列表里）。
+
+字段名有两套等价写法，本机 v2.0.22 实测**都能用**：`package`/`settings`/`capabilities`（本文件在用）与官方 schema 的 `npm`/`options`/`modalities`。
+
+> 多模态模型：`capabilities.input` 需含 `"image"`（官方写法为 `modalities.input`）。opencode 默认认为自定义 provider 只支持 text 输入，**不声明即无法开启多模态**（[Issue #9897](https://github.com/anomalyco/opencode/issues/9897)）。
+
+**不要用 `variants` 字段。** 它由 opencode 按模型 ID 硬编码生成（源码 `provider/transform.ts` 的 `variants()` 只内置识别 `glm-5.2`、`minimax-m3`、Anthropic 系列等），自定义模型算出来是 0 个变体，配置里一旦声明 `variants`，该模型会被整体丢弃、不出现在模型列表里（连 `variants: {}` 也会）。切换思考强度只能靠**多个 model 条目**。
+
+### Strata 专用条目
+
+Strata 接受任意模型名（服务端忽略该字段），`limit.output` 必须给思考留足余量——实测 `output: 8192` 时难题的思考会吃光全部预算，返回**空正文**（`finish_reason: length`）；官方建议 `32768`。服务端另有 `reasoning_budget_tokens: 16384` 兜底，思考到上限会强制收尾再作答。
+
+```json
+"strata": {
+  "package": "@opencode/ai/providers/openai-compatible",
+  "name": "Strata (Qwen3.8-Flash-Next 125B)",
+  "settings": { "baseURL": "http://localhost:8089/v1", "apiKey": "anything" },
+  "models": {
+    "strata":        { "name": "Qwen3.8-Flash-Next (high, 默认)", "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] }, "limit": { "context": 131072, "output": 32768 }, "options": { "reasoningEffort": "high" } },
+    "strata-medium": { "name": "Qwen3.8-Flash-Next (medium)",     "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] }, "limit": { "context": 131072, "output": 32768 }, "options": { "reasoningEffort": "medium" } },
+    "strata-low":    { "name": "Qwen3.8-Flash-Next (low, 快)",    "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] }, "limit": { "context": 131072, "output": 32768 }, "options": { "reasoningEffort": "low" } },
+    "strata-none":   { "name": "Qwen3.8-Flash-Next (no think)",   "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] }, "limit": { "context": 131072, "output": 32768 }, "options": { "reasoningEffort": "none" } }
+  }
+}
+```
+
+四个条目共用同一端点，靠 `options.reasoningEffort` 区分强度（模型名写什么都行）。Strata 只有 **1 个 slot**，并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成，不影响用，但别指望并行加速。
