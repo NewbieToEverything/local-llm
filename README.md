@@ -65,6 +65,35 @@ docker run --rm \
 | gemma4-12b | 8086 | 256K | `./run.sh gemma4-12b up -d` |
 | gemma4-26BA4B | 8087 | 256K | `./run.sh gemma4-26BA4B up -d` |
 | gemma4-26b-qat | 8088 | 256K | `./run.sh gemma4-26b-qat up -d` |
+| strata | 8089 | 128K | 需先构建镜像，见 [Strata](#strataqwen38-flash-next125b) |
+
+### Strata / Qwen3.8-Flash-Next 125B
+
+第三个推理引擎，与上面基于 llama.cpp 的 8 个模型**机制不同**：Strata 把模型分层放在 GPU（高频 expert）、RAM（全量）、SSD（29GB 查找表），因此能在单张 16GB 卡上跑 125B MoE（约 6B 激活）。
+
+- **构建镜像**（上游 Dockerfile 要编译 CUDA 引擎，20~40 分钟；`CUDA_ARCHITECTURES=120` 只编 RTX 50 系）：
+
+  ```bash
+  cd strata
+  docker build -t strata:upstream --build-arg CUDA_ARCHITECTURES=120 .
+  docker build -t strata:latest -f Dockerfile.local \
+    --build-arg HOST_UID=$(id -u) --build-arg HOST_GID=$(id -g) .
+  ```
+
+- **启动**：`./run.sh strata up -d`。首次启动会下载约 85GB 模型并转换格式（`strata-data/`，完成后约 93GB），耗时数小时，期间系统卡顿属正常。
+- **依赖国内镜像源**：容器内解析不到 `huggingface.co`（DNS 被污染），已在 compose 里设 `HF_ENDPOINT=https://hf-mirror.com`。
+- **与其它模型互斥**：占 94.7% 显存，启动前须停掉 llama.cpp 容器；且只有 1 个 slot（串行），不适合做并发辅助任务。
+
+本机（RTX 5070 Ti 16GB / 125GB RAM，IQ3_S 完整 512 expert）实测：
+
+| 指标 | 实测 |
+|------|------|
+| 输出速度 | **54.3 tok/s** |
+| Prefill (29K prompt) | **5958 tok/s** |
+| 上下文 | 128K |
+| 显存 / 内存 | 15.4 / 16.3 GB · 66 GB |
+
+配置为 `IQ3_S`（质量对标原模型）· `VISION=yes` · `KV=int8` · `GPU=0`。其余尺寸（`Q2_0`/`IQ2_XS`/`IQ3_XXS`/`Coder`/`Swift`）改 compose 里 `MODEL` 后 `./run.sh strata up -d` 即可，同一分片表已缓存的不重复下载。
 
 ## 采样参数配置
 

@@ -19,6 +19,8 @@ if [ -z "$PROJECT" ]; then
     echo "  gemma4-12b        - Gemma4 12B (port 8086, llama.cpp)"
     echo "  agentworld-35b    - Qwen-AgentWorld 35B (port 8084, llama.cpp)"
     echo ""
+    echo "  strata            - Strata / Qwen3.8-Flash-Next 125B (port 8089, 独占显存)"
+    echo ""
     echo "Example:"
     echo "  ./run.sh gpt-oss-20b up -d"
     echo "  ./run.sh gemma4-26BA4B down"
