@@ -10,22 +10,26 @@
 
 下表中的速度和延迟均指在 NVIDIA RTX 5070 Ti (16GB VRAM) 上的表现。
 
-| 指标 | GPT-OSS-20B | GPT-OSS-120B | Qwen3.5-35BA3B | Qwen3.6-35BA3B | Gemma4-26BA4B | Gemma4-26BA4B (QAT) | Gemma4-12B | Qwen-AgentWorld-35B-A3B |
-|------|-------------|--------------|---------------|---------------|---------------------|------------|------------------------|------------------------|
-| API生成速度 (medium) | 154 tok/s | 12.62 tok/s | 57.77 tok/s | 57.03 tok/s | 44.06 tok/s | **52.6 tok/s** | 91.2 tok/s (Q4_K_M) / 65 tok/s (Q6_K) | 62.2 tok/s |
-| 首Token延迟 | 48 ms | 726 ms | 73 ms | 80 ms | 160 ms | **76 ms** | 365 ms (Q4_K_M) / 1251 ms (Q6_K) | 46 ms |
-| Prefill 速度 (4K prompt) | **8198 tok/s** | **672 tok/s** | **1612 tok/s** | **1634 tok/s** | **2101 tok/s** | **2645 tok/s** | **3058 tok/s** (Q4_K_M) / **3185 tok/s** (Q6_K) | 1747 tok/s |
-| 量化格式 | Q4_K_M | MXFP4 | Q4_K_M | Q4_K_M | Q4_K_M | UD-Q4_K_XL (QAT) | Q4_K_M / Q6_K | Q4_K_M |
-| 发布日期 | 2025-08-05 | 2025-08-05 | 2026-02-24 | 2026-04-16 | 2026-04-02 | 2026-06-09 | 2026-06-03 | 2026-06-24 |
-| 参数量 | 21B (3.6B活跃) | 117B (5.1B活跃) | 35B (3B活跃) | 35B (3B活跃) | 26B (3.8B活跃) | 26B (3.8B活跃) | 12B (dense) | 35B (3B活跃) |
-| 模型架构 | MoE Transformer | MoE Transformer | Hybrid Gated DeltaNet + MoE | Hybrid Gated DeltaNet + MoE | MoE Transformer | MoE Transformer | Dense Unified | Hybrid Gated DeltaNet + MoE |
-| 上下文长度 | 128K | 128K | 256K | 256K | 256K | 256K | 256K | 256K |
-| 内存占用 | ~12GB | ~63GB | 22GB | 22GB | 17GB | ~15GB | ~13GB (Q4_K_M) / ~14GB (Q6_K) | ~21GB |
-| 许可证 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
-| 多模态支持 | - | - | 图像 | 图像 | 图像 | 图像 | 图像+音频 | 图像 |
-| SWE-bench (代码问题) | 60.7% | ~62% | 69.2% | 73.4% | 71.0% | ~ | ~70% | - (world model) |
-| AIME (竞赛数学) | 96%/98.7% | - | 91.0%/91.0% | 92.7%/92.7% | 88.3% | ~ | ~88% | - (world model) |
-| MMLU (知识测试) | 85.3% | - | 85.3% | 86.1% | 85.2% | ~ | ~85.5% | - (world model) |
+| 指标 | GPT-OSS-20B | GPT-OSS-120B | Qwen3.5-35BA3B | Qwen3.6-35BA3B | Gemma4-26BA4B | Gemma4-26BA4B (QAT) | Gemma4-12B | Qwen-AgentWorld-35B-A3B | Qwen3.8-Flash-Next (Strata) |
+|------|-------------|--------------|---------------|---------------|---------------------|------------|------------------------|------------------------|------------------------|
+| API生成速度 (medium) | 154 tok/s | 12.62 tok/s | 57.77 tok/s | 57.03 tok/s | 44.06 tok/s | **52.6 tok/s** | 91.2 tok/s (Q4_K_M) / 65 tok/s (Q6_K) | 62.2 tok/s | 59.1 tok/s |
+| 首Token延迟 | 48 ms | 726 ms | 73 ms | 80 ms | 160 ms | **76 ms** | 365 ms (Q4_K_M) / 1251 ms (Q6_K) | 46 ms | 453 ms |
+| Prefill 速度 (4K prompt) | **8198 tok/s** | **672 tok/s** | **1612 tok/s** | **1634 tok/s** | **2101 tok/s** | **2645 tok/s** | **3058 tok/s** (Q4_K_M) / **3185 tok/s** (Q6_K) | 1747 tok/s | 2573 tok/s |
+| 量化格式 | Q4_K_M | MXFP4 | Q4_K_M | Q4_K_M | Q4_K_M | UD-Q4_K_XL (QAT) | Q4_K_M / Q6_K | Q4_K_M | GSQ-RCO IQ3_S |
+| 发布日期 | 2025-08-05 | 2025-08-05 | 2026-02-24 | 2026-04-16 | 2026-04-02 | 2026-06-09 | 2026-06-03 | 2026-06-24 | 2026-09 |
+| 参数量 | 21B (3.6B活跃) | 117B (5.1B活跃) | 35B (3B活跃) | 35B (3B活跃) | 26B (3.8B活跃) | 26B (3.8B活跃) | 12B (dense) | 35B (3B活跃) | 125B (6B活跃) + 51B n-gram + 4B MTP |
+| 模型架构 | MoE Transformer | MoE Transformer | Hybrid Gated DeltaNet + MoE | Hybrid Gated DeltaNet + MoE | MoE Transformer | MoE Transformer | Dense Unified | Hybrid Gated DeltaNet + MoE | Hybrid Gated DeltaNet + QSA + N-gram + MoE |
+| 上下文长度 | 128K | 128K | 256K | 256K | 256K | 256K | 256K | 256K | 128K (原生 262K) |
+| 内存占用 | ~12GB | ~63GB | 22GB | 22GB | 17GB | ~15GB | ~13GB (Q4_K_M) / ~14GB (Q6_K) | ~21GB | 66GB RAM / 15.4GB 显存 |
+| 许可证 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | **qwen-community-1.0**（非 Apache，商用需自行确认） |
+| 多模态支持 | - | - | 图像 | 图像 | 图像 | 图像 | 图像+音频 | 图像 | 图像 |
+| SWE-bench (代码问题) | 60.7% | ~62% | 69.2% | 73.4% | 71.0% | ~ | ~70% | - (world model) | - ² |
+| AIME (竞赛数学) | 96%/98.7% | - | 91.0%/91.0% | 92.7%/92.7% | 88.3% | ~ | ~88% | - (world model) | - ² |
+| MMLU (知识测试) | 85.3% | - | 85.3% | 86.1% | 85.2% | ~ | ~85.5% | - (world model) | - ² |
+
+¹ Strata 不是 llama.cpp：它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29GB 查找表），因此能在单张 16GB 卡上跑 125B MoE。**它独占 94.7% 显存，启动前须停掉其它模型容器；且只有 1 个 slot（串行），不适合并发辅助任务。** 首次启动需先构建镜像（见 [AGENTS.md](AGENTS.md)），并会下载约 85GB 模型、转换格式，耗时数小时。
+
+² 官方 model card 未报告 SWE-bench Verified / AIME / MMLU，无法与本表其它列同口径并列。其自报的另一套基准分数为：SWE-bench Pro 62.5、SWE-bench Multilingual 81.0、LiveCodeBench v6 91.9、GPQA Diamond 91.7、HLE 35.9、DeepSWE 1.1 58.7、NL2Repo-Bench 48.1、CoWorkBench 73.9、AndroidWorld 84.5、LVBench 76.6、ERQA 72.3、RealWorldQA 88.5（出处：[Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next)，评测条件见其 card 脚注）。
 
 ## 快速开始
 
@@ -65,35 +69,15 @@ docker run --rm \
 | gemma4-12b | 8086 | 256K | `./run.sh gemma4-12b up -d` |
 | gemma4-26BA4B | 8087 | 256K | `./run.sh gemma4-26BA4B up -d` |
 | gemma4-26b-qat | 8088 | 256K | `./run.sh gemma4-26b-qat up -d` |
-| strata | 8089 | 128K | 需先构建镜像，见 [Strata](#strataqwen38-flash-next125b) |
+| strata | 8089 | 128K | 需先构建镜像 ¹ |
 
-### Strata / Qwen3.8-Flash-Next 125B
+¹ Strata 与上面 8 个模型有三点差异，其余配置见 `strata/docker-compose.yml`，构建步骤见 [AGENTS.md](AGENTS.md)：
 
-第三个推理引擎，与上面基于 llama.cpp 的 8 个模型**机制不同**：Strata 把模型分层放在 GPU（高频 expert）、RAM（全量）、SSD（29GB 查找表），因此能在单张 16GB 卡上跑 125B MoE（约 6B 激活）。
+1. **首次须先构建镜像**（上游 Dockerfile 要编译 CUDA 引擎，20~40 分钟），否则 `./run.sh strata up -d` 直接失败。
+2. **独占 94.7% 显存**，启动前须停掉其它模型容器；且只有 1 个 slot（串行），不适合并发辅助任务。
+3. **首次启动会下载约 85GB 模型并转换格式**（落到 `strata-data/`，完成后约 93GB），耗时数小时、期间系统卡顿属正常。容器内解析不到 `huggingface.co`（DNS 被污染），已在 compose 里设 `HF_ENDPOINT=https://hf-mirror.com`。
 
-- **构建镜像**（上游 Dockerfile 要编译 CUDA 引擎，20~40 分钟；`CUDA_ARCHITECTURES=120` 只编 RTX 50 系）：
-
-  ```bash
-  cd strata
-  docker build -t strata:upstream --build-arg CUDA_ARCHITECTURES=120 .
-  docker build -t strata:latest -f Dockerfile.local \
-    --build-arg HOST_UID=$(id -u) --build-arg HOST_GID=$(id -g) .
-  ```
-
-- **启动**：`./run.sh strata up -d`。首次启动会下载约 85GB 模型并转换格式（`strata-data/`，完成后约 93GB），耗时数小时，期间系统卡顿属正常。
-- **依赖国内镜像源**：容器内解析不到 `huggingface.co`（DNS 被污染），已在 compose 里设 `HF_ENDPOINT=https://hf-mirror.com`。
-- **与其它模型互斥**：占 94.7% 显存，启动前须停掉 llama.cpp 容器；且只有 1 个 slot（串行），不适合做并发辅助任务。
-
-本机（RTX 5070 Ti 16GB / 125GB RAM，IQ3_S 完整 512 expert）实测：
-
-| 指标 | 实测 |
-|------|------|
-| 输出速度 | **54.3 tok/s** |
-| Prefill (29K prompt) | **5958 tok/s** |
-| 上下文 | 128K |
-| 显存 / 内存 | 15.4 / 16.3 GB · 66 GB |
-
-配置为 `IQ3_S`（质量对标原模型）· `VISION=yes` · `KV=int8` · `GPU=0`。其余尺寸（`Q2_0`/`IQ2_XS`/`IQ3_XXS`/`Coder`/`Swift`）改 compose 里 `MODEL` 后 `./run.sh strata up -d` 即可，同一分片表已缓存的不重复下载。
+尺寸可换：改 compose 里 `MODEL` 后重启即可，`Q2_0` / `IQ2_XS` / `IQ3_XXS` / `IQ3_S` / `Coder` / `Swift` 共用已缓存的分片表与 vision encoder。
 
 ## 采样参数配置
 
