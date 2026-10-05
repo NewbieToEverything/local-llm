@@ -27,7 +27,7 @@
 | AIME (竞赛数学) | 96%/98.7% | - | 91.0%/91.0% | 92.7%/92.7% | 88.3% | ~ | ~88% | - (world model) | - ² |
 | MMLU (知识测试) | 85.3% | - | 85.3% | 86.1% | 85.2% | ~ | ~85.5% | - (world model) | - ² |
 
-¹ Strata 不是 llama.cpp：它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29GB 查找表），因此能在单张 16GB 卡上跑 125B MoE。**它独占 94.7% 显存，启动前须停掉其它模型容器；且只有 1 个 slot（串行），不适合并发辅助任务。** 部署步骤见 [Strata 部署](#strata-部署)。
+¹ Strata 不是 llama.cpp：它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29GB 查找表），因此能在单张 16GB 卡上跑 125B MoE。**常态占 94.7% 显存，但可用 `POST /v1/vram` 按需让出（`vram_elastic`，实测 22 ms 放出 5.36 GiB），无须再停容器；只有 1 个 slot（串行），不适合并发辅助任务。** 部署步骤见 [Strata 部署](#strata-部署)。
 
 ² 官方 model card 未报告 SWE-bench Verified / AIME / MMLU，无法与本表其它列同口径并列。其自报的另一套基准分数为：SWE-bench Pro 62.5、SWE-bench Multilingual 81.0、LiveCodeBench v6 91.9、GPQA Diamond 91.7、HLE 35.9、DeepSWE 1.1 58.7、NL2Repo-Bench 48.1、CoWorkBench 73.9、AndroidWorld 84.5、LVBench 76.6、ERQA 72.3、RealWorldQA 88.5（出处：[Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next)，评测条件见其 card 脚注）。
 
@@ -150,12 +150,39 @@ sha256sum llama-xxx/models/SomeFile.gguf   # 与上面的 oid 对照
 git clone https://github.com/Niko1221/Strata.git strata
 
 cd strata
-docker build -t strata:upstream --build-arg CUDA_ARCHITECTURES=120 .
+# 上游 Dockerfile 在 build 时要下 llama.cpp 源码（GitHub）+ apt/pip，全走构建期网络。
+# 必须同时给 --network host 和四个代理变量：只给 --network host 仍会直连，
+# 实测直连到 GitHub 只有 ~30 KB/s，37.7 MB 的包卡 40 分钟都过不去。
+docker build --network host \
+  --build-arg CUDA_ARCHITECTURES=120 \
+  --build-arg HTTP_PROXY=http://127.0.0.1:10808 \
+  --build-arg HTTPS_PROXY=http://127.0.0.1:10808 \
+  --build-arg http_proxy=http://127.0.0.1:10808 \
+  --build-arg https_proxy=http://127.0.0.1:10808 \
+  -t strata:upstream .
 
 # 派生层：把 /opt/strata 交给宿主用户，使 bind mount 产生的文件不属 root
 docker build -t strata:latest -f Dockerfile.local \
   --build-arg HOST_UID=$(id -u) --build-arg HOST_GID=$(id -g) .
 ```
+
+### 1b. 更新引擎到新版本
+
+```bash
+cd strata
+git pull
+```
+
+然后**重新执行上面第 1 步那条 `strata:upstream` 的构建命令**（代理参数一个都不能省）。要点：
+
+- **层缓存救不了更新**：`COPY . .` 排在下载/编译之前，源码一变它之后的所有层全部失效（Docker 层缓存只在「源码 + 构建命令完全没变」时命中，那时整条构建 0 秒完成）。llama.cpp 那个包在 `setup.py` 里本来有缓存，但上游 `.dockerignore` 刻意排除了 `third_party/`，宿主机上的副本进不了构建上下文。
+- **有代理时整条约 4 分钟**：下载 17 秒 + sm_120 单架构编译约 3.5 分钟（20 核并行）。没有代理则无限重试。
+- **先留回滚标签**，再重建：
+  ```bash
+  docker tag strata:upstream strata:upstream-<旧版本>
+  docker tag strata:latest   strata:latest-<旧版本>
+  ```
+- 新版可能要新参数：`git pull` 后确认 `setup.py` 的 `MIN_ENGINE` 是否已等于新版本，并注意 config 里 `args` 是 setup 自有键，**重跑 `--setup` 会丢掉手加的引擎参数**（如 `--pool-workers`）。
 
 `Dockerfile.local` 这层是必需的：上游镜像以 root 运行，`/opt/strata` 又是 bind mount 的宿主目录，不 chown 的话 `strata-data/` 里的文件会全属 root、后续层就没法增量写。
 
@@ -218,11 +245,33 @@ python3 tools/mtp_fetch.py verify --out ../strata-data/mtp   # 退出码 0 = 全
 
 ### 3. 配置与运行要点
 
-- **显存互斥**：占 94.7%（15.4/16.3 GB），启动前必须停掉 llama.cpp 容器；只有 1 个 slot（串行），不适合做并发辅助任务。
+- **显存按需让出（不用再停 Strata）**：常态占 15.4/16.3 GB，但 `vram_elastic` 已开启，要跑 llama.cpp 时用 `POST /v1/vram` 即可：
+  ```bash
+  # 让出 6000 MiB：实测 22 ms，释放 5.36 GiB（槽位 3786→1041）。
+  # 期间专家转 CPU 计算，仍可服务——实测 55 tok/s（正常 ~76）。
+  curl -s -X POST -H 'Content-Type: application/json' -d '{"reserve_mib": 6000}' http://127.0.0.1:8089/v1/vram
+  # 用完还回来：实测 126 ms
+  curl -s -X POST -H 'Content-Type: application/json' -d '{"reserve_mib": null}'  http://127.0.0.1:8089/v1/vram
+  ```
+  ⚠️ 长回**只到 3399/3786 槽位**（引擎遵守启动时的 700 MiB 预留 + 512 MiB 分段粒度，再调 `null` 也不会更高），速度约 94%；**要拿满缓存得 `docker restart strata`**。
+- **只有 1 个 slot（串行）**，不适合做并发辅助任务。
 - **`HF_ENDPOINT=https://hf-mirror.com` 必需**：容器内解析不到 `huggingface.co`（DNS 被污染），已在 `strata/docker-compose.yml` 里设好。
 - **切尺寸**：改 compose 里 `MODEL`（`Q2_0`/`IQ2_XS`/`IQ3_XXS`/`IQ3_S`/`Coder`/`Swift`）后 **`./run.sh strata down` 再 `up -d`**——直接改 compose 后 `up -d` 不会重建容器。分片表与 vision encoder 共用，已缓存的不重复下载。
 - **配置位置**：serving / 采样参数在 `strata-data/config/strata-<尺寸>.json`，chat template kwargs 在 `strata/docker-compose.yml` 的环境变量里。
+- **改 config 后必须 `docker restart strata`**：`up -d` 对运行中的容器是 no-op，只有重启才会重读 config。（`docker restart` 会触发引擎干净退出 → 自动保存学习型 profile，见下。）
 - **首次启动**仍会跑 `setup.py` 做格式转换（生成 `strata-data/packs/`），此时 CPU / 磁盘占用高属正常。
+
+#### 3b. 调优实测结论与坑
+
+- **`--pool-workers 14`（+3.6% decode）**：引擎默认给「每物理核减一」= 19 个 worker，但 host 线程是自旋忙等，19+1 = **20 线程占满 20 核**，引擎自己的 PLE I/O 线程、专家拷贝线程、GPU staging 线程抢不到 CPU。实测 7–16 全部等价、只有 19 掉下来；prefill 无影响。测法必须看下一条。⚠️ `args` 是 setup 自有键，**重跑 `--setup` 会丢掉这条**。
+- **`expert_profile_save`（已开，零成本）**：作用是跨重启保留自适应层学到的专家路由。落盘路径**必须给绝对路径且放 `/data` 卷上**（相对路径会落在容器可写层，`down` 就没了）。实测首请求命中率 74.3% → 77.6%。它是「用户键」，`--setup` 重跑会保留。
+- **删学习型 profile 要 `docker kill` 而不是 `docker restart`**：引擎在**干净退出时会写回** profile，所以「先删文件再 restart」无效——旧引擎退出时又写了一个，新启动照样读到。正确顺序是 `docker kill strata` → 删文件 → `docker start strata`。
+- **`--pool-affinity` 在本机是 no-op**：引擎靠 `/sys/devices/system/cpu/cpuN/cpu_capacity` 判 P/E 核，本机该文件不存在 → `is_hybrid=false` → `all`/`auto`/`p-cores` 三种取值走同一分支（实测仍报 19 workers）。真要钉核只能用 cgroup `cpuset`，代价是整容器被限制，不推荐。
+- **`--prefill auto:16384` 不可能生效**：chunk 上限虽然抬高，实际大小却受「专家缓存能借出多少」约束——8192 需 4.56 GiB，16384 要约 9.1 GiB ≈ 4800 slots，而总共只有 3786 slots（实测引擎仍选 8192）。显存在每个方向都是硬约束。
+- **`--ple-io ram` 不划算**：给每次 PLE 行读取注入 5 ms 只让 decode 掉 6.6%（约 20% 泄漏到关键路径），而真实 NVMe 非缓冲读延迟仅 0.1–0.2 ms ⇒ 收益 ≲0.3%；代价是把 28.8 GB 的 n-gram 表锁进 RAM，会挤掉 46.84 GiB 专家 arena 的 page cache。
+- **比 tok/s 的方法学（最重要的一条）**：这是推理模型，**任何影响专家计算的配置改动都会改变浮点求和顺序 → 近平分叉 → 思考轨迹不同**，而不同文本的 per-token 代价相差可达数个百分点（引擎文档自己也这么写）。所以跨配置直接比 decode tok/s **是无效的**——我为此两次得出错误结论。可行做法只有两种：① **多 prompt 配对**（同一 prompt 在两个配置下各跑一次，看多个不同 prompt 的差值分布）；② 只比 **prefill**（由输入 token 决定、与输出无关）。另外 `hit_rate` 不是纯缓存指标——走 PCIe 的专家被排除在外，改 `--pcie-frac` 会移动它（0.1.39 起日志多打 `pcie_share`，实测约 16%）。
+- **版本对比（同 16 prompt 配对）**：v0.1.38 → v0.1.39 **+4.30 tok/s（+5.95%），t=5.35，15/16 为正**。
+
 
 ## 采样参数配置
 
