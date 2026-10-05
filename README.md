@@ -270,9 +270,11 @@ environment:
 
 `opencode run --model provider/model#variant` 同样会写入这个状态，因此**用它做测试会污染后续所有请求**——测试档位请用 curl 直连服务端，或测完清理该键。
 
+**手动删掉这个键可能白删：会话切换会把它写回来。** TUI 在会话 ID 变化时，会从该会话最后一条用户消息里恢复 variant 并重新持久化（`packages/tui/src/component/prompt/index.tsx:305-327`，`local.model.variant.set(msg.model.variant)`）。所以在一个已经用过 `high` 的旧会话里，键会不断复活。彻底清掉要么**新建会话**，要么在 variant 窗口选 Default。
+
 ### Strata 专用条目
 
-Strata 接受任意模型名（服务端忽略该字段），故条目名可自定义——**把区分词放在名字最前面**，否则 TUI 截断后几个条目看起来一样。
+Strata 接受任意模型名（服务端忽略该字段），故条目名可自定义。
 
 `limit.output` 必须给思考留足余量：实测 `8192` 时难题的思考会吃光全部预算，返回**空正文**（`finish_reason: length`），官方建议 `32768`。
 
@@ -281,17 +283,17 @@ Strata 接受任意模型名（服务端忽略该字段），故条目名可自�
 ```json
 "strata": {
   "package": "@opencode/ai/providers/openai-compatible",
-  "name": "Strata (Qwen3.8-Flash-Next 125B)",
+  "name": "Strata",
   "settings": { "baseURL": "http://localhost:8089/v1", "apiKey": "anything" },
   "models": {
     "strata": {
-      "name": "Strata high｜默认（variant 可切 low/medium）",
+      "name": "Qwen3.8-Flash-Next",
       "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] },
       "limit": { "context": 131072, "output": 32768 },
       "options": { "reasoningEffort": "high" }
     },
     "strata-none": {
-      "name": "Strata none｜不思考（最快）",
+      "name": "Qwen3.8-Flash-Next-None",
       "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] },
       "limit": { "context": 131072, "output": 32768 },
       "options": { "reasoningEffort": "none" }
@@ -299,6 +301,22 @@ Strata 接受任意模型名（服务端忽略该字段），故条目名可自�
   }
 }
 ```
+
+#### 命名规则：model 名和 provider 名会被直接拼在一起
+
+输入框下方的显示串由 TUI 拼成（`packages/tui/src/component/prompt/index.tsx:1441-1450`）：
+
+```
+{agent} · {model.name}{provider.name} · {variant}
+```
+
+**中间没有分隔符**——所以两段都会连着读，且当前选中的 variant 以 `·high` 形式跟在最后（`none` 不在档位表里，不会显示）。取值见 `context/local.tsx:266-268`：两段都优先用配置里的 `name`，缺省才回退到 `modelID` / `providerID`。
+
+因此命名要满足两点：**每条模型名自带区分词**（没选 variant 时 `·high` 不显示，两条会撞名），**provider 名要短**（两条共用，省不掉也不该重复占位）。上面这套渲染出来是 29 字符，与云端模型（如 `Space Bunny FreeOpenCode Zen·max`，32 字符）相当。
+
+`name` 纯属显示，调用时用的是 `providerID/modelID`（`opencode models` 也只打这两个），改名不影响任何请求。TUI 没有关闭 provider 名的开关（`packages/tui/src/config/index.tsx` 的 `Info` schema 里没有该项）。
+
+> ⚠️ `strata-none` 也会弹出 `low`/`medium`/`high` 档位——`provider/transform.ts:800-805` 对 `@ai-sdk/openai-compatible` 的**每个**模型都返回这三个值，不看 `options`。在它上面选了档位就会覆盖 `options.reasoningEffort: none`，名字里的 `-None` 随即名不副实。
 
 用法对照：
 
