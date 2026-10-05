@@ -263,7 +263,9 @@ python3 tools/mtp_fetch.py verify --out ../strata-data/mtp   # 退出码 0 = 全
 
 #### 3b. 调优实测结论与坑
 
-- **`--pool-workers 14`（+3.6% decode）**：引擎默认给「每物理核减一」= 19 个 worker，但 host 线程是自旋忙等，19+1 = **20 线程占满 20 核**，引擎自己的 PLE I/O 线程、专家拷贝线程、GPU staging 线程抢不到 CPU。实测 7–16 全部等价、只有 19 掉下来；prefill 无影响。测法必须看下一条。⚠️ `args` 是 setup 自有键，**重跑 `--setup` 会丢掉这条**。
+- **`--pool-workers 14`（+3.6% decode）**：引擎默认给「每物理核减一」= 19 个 worker，但 host 线程是自旋忙等，19+1 = **20 线程占满 20 核**，引擎自己的 PLE I/O 线程、专家拷贝线程、GPU staging 线程抢不到 CPU，于是每一轮 barrier 都被拖长。**收益来自「留出 CPU 余量」，不是「避开 E 核」**——配对实测（同 0.1.39、同 16 prompt）`--pool-workers 7`（纯 P 核）vs `14`（7 P + 7 E）只差 **−0.61%（t=−0.54，p≈0.60，不显著）**，而 14 vs 19 是 **+3.6%（t=3.68）**。所以**不要**费劲去钉 P 核，留余量才是关键。prefill 无影响。
+  钉核结果可直接观测：`grep Cpus_allowed_list /proc/<引擎pid>/task/*/status` —— worker i 落在 **CPU i+1**（升序，P 核在前），host 与引擎辅助线程在 CPU 0（14 workers → CPU 1-14 各一个）。
+  ⚠️ `args` 是 setup 自有键，**重跑 `--setup` 会丢掉这条**。
 - **`expert_profile_save`（已开，零成本）**：作用是跨重启保留自适应层学到的专家路由。落盘路径**必须给绝对路径且放 `/data` 卷上**（相对路径会落在容器可写层，`down` 就没了）。实测首请求命中率 74.3% → 77.6%。它是「用户键」，`--setup` 重跑会保留。
 - **删学习型 profile 要 `docker kill` 而不是 `docker restart`**：引擎在**干净退出时会写回** profile，所以「先删文件再 restart」无效——旧引擎退出时又写了一个，新启动照样读到。正确顺序是 `docker kill strata` → 删文件 → `docker start strata`。
 - **`--pool-affinity` 在本机是 no-op**：引擎靠 `/sys/devices/system/cpu/cpuN/cpu_capacity` 判 P/E 核，本机该文件不存在 → `is_hybrid=false` → `all`/`auto`/`p-cores` 三种取值走同一分支（实测仍报 19 workers）。真要钉核只能用 cgroup `cpuset`，代价是整容器被限制，不推荐。
