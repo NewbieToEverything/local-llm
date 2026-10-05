@@ -434,13 +434,13 @@ Strata 接受任意模型名（服务端忽略该字段），故条目名可自�
     "strata": {
       "name": "Qwen3.8-Flash-Next",
       "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] },
-      "limit": { "context": 131072, "output": 32768 },
+      "limit": { "context": 131072, "input": 131072, "output": 32768 },
       "options": { "reasoningEffort": "high" }
     },
     "strata-none": {
       "name": "Qwen3.8-Flash-Next-None",
       "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] },
-      "limit": { "context": 131072, "output": 32768 },
+      "limit": { "context": 131072, "input": 131072, "output": 32768 },
       "options": { "reasoningEffort": "none" }
     }
   }
@@ -471,11 +471,67 @@ Strata 接受任意模型名（服务端忽略该字段），故条目名可自�
 | 中等 / 快 | 选 `strata` + variant `medium` / `low` |
 | 最快、完全不思考 | 选 `strata-none` |
 
-服务端还有两个兜底键，写在 `strata-data/config/strata-iq3_s.json`（改后需重启容器）：
+服务端还有两个兜底键，写在 `strata-data/config/strata-iq3_s.json`：
 
 | 键 | 值 | 作用 |
 |----|-----|------|
 | `reasoning_budget_tokens` | `16384` | 思考硬上限，到点强制收尾再作答，保证不会出现空正文 |
-| `fit_max_tokens` | `true` | `prompt + max_tokens` 超上下文时自动压缩，而非返回 400 |
+| `fit_max_tokens` | `true` | `prompt + max_tokens` 超上下文时收敛输出长度，而非返回 400 |
+
+> ⚠️ **改这两个键必须重启容器**：`serve/server.py:2940` 只在启动时读一次并存进 `self.fit_max_tokens`，之后不再看配置文件。`docker compose restart` 不够（entrypoint 不会重跑），要 `./run.sh strata down` 再 `up -d`。启动日志里能看到是否真的生效：
+>
+> ```
+> server 0.0.0.0:8080, gpu 0, fit_max_tokens true, reasoning_budget_tokens 16384
+> [strata] thinking budget: 16384 tokens (reasoning_budget_tokens; a request can set its own)
+> ```
+
+#### 上下文溢出：`fit_max_tokens` 能救什么、救不了什么
+
+`serve/server.py:1379` 的可用余量是 `room = 131072 - 8 - prompt_tokens`（`CTX_SLACK = 8`）。行为分三种：
+
+| 情形 | 行为 |
+|------|------|
+| `max_tokens ≤ room` | 正常生成 |
+| `max_tokens > room` 且 `fit_max_tokens: true` | **收敛**到 `room`，HTTP 200 |
+| `room < 1`（prompt ≥ 131064） | **仍然报错**，与 `fit_max_tokens` 无关 |
+
+第三种是硬天花板：`server.py:1381` 的 `room < 1` 判断在 `fit_max_tokens` 分支**之前**，那时只会 `raise`。
+
+实测（复现 opencode 报错的同一组数字）：
+
+| 请求 | 结果 |
+|------|------|
+| prompt 102785 + `max_tokens` 29117（溢出 830） | HTTP 200，收敛到 28279，正常作答 |
+| prompt 102785 + `max_tokens` 60000 | HTTP 200，同样收敛 |
+| prompt 130978 + `max_tokens` 100（room 仅 86） | HTTP 200，`finish_reason: length`，86 tokens |
+
+#### 为什么还需要调早 opencode 的压缩阈值
+
+`fit_max_tokens` 只保证「不 400」，不保证「有地方写答案」——room 剩多少完全取决于 prompt 长度。所以 opencode 侧的自动压缩必须比这条线更早触发，否则会在压缩生效前先撞上 `room < 1`。
+
+opencode 的阈值算法在 `packages/opencode/src/session/overflow.ts`：
+
+- 未设 `limit.input` 时：`usable = context - min(limit.output, 32000)` = 131072 − 32000 = **99072**
+- 设了 `limit.input` 时：`usable = limit.input - compaction.reserved`
+
+两个容易踩的点：
+
+1. **`compaction.reserved` 只在设了 `limit.input` 时才生效**（`overflow.ts:17-19` 的三元分支），否则那个 45000 根本不参与计算。
+2. **只加 `limit.input` 会让压缩更晚触发**（`usable` 从 99072 变成 111072），必须同时显式设 `reserved`。
+
+当前配置：
+
+```json
+// opencode.json
+"compaction": { "reserved": 45000 }
+// strata 条目的 limit（两个条目都要）
+"limit": { "context": 131072, "input": 131072, "output": 32768 }
+```
+
+→ `usable = 131072 - 45000 = 86072`，比默认早 13000 tokens。
+
+> `reserved` 是 v1 配置的字段名；`opencode debug config` 会把它显示成 `buffer`（`core/src/v1/config/migrate.ts:61` 的 v1→v2 改名），值能透传就说明写对了。
+
+**还有一层：压缩只在 turn 收尾时检查**（`session/processor.ts:753-758`，拿上一轮的 `usage.tokens` 判断）。所以单个 turn 内新增的工具输出可以把 prompt 一次性顶过阈值——这正是 opencode 报 `prompt (102847) + max tokens (29117) exceeds the context` 的成因：上一轮结束时还没到 99072，这一轮就被顶过去了。`reserved` 留的 45000 缓冲就是为这种情况兜的底。
 
 **Strata 只有 1 个 slot**，并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成（总耗时是**累加**，不是取最大），且排队中的请求 6.5ms 就拿到响应头，不会触发客户端超时。日常单任务无影响；并行 subagent 会退化成串行。
