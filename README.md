@@ -234,11 +234,49 @@ environment:
 
 > 多模态模型：`capabilities.input` 需含 `"image"`（官方写法为 `modalities.input`）。opencode 默认认为自定义 provider 只支持 text 输入，**不声明即无法开启多模态**（[Issue #9897](https://github.com/anomalyco/opencode/issues/9897)）。
 
-**不要用 `variants` 字段。** 它由 opencode 按模型 ID 硬编码生成（源码 `provider/transform.ts` 的 `variants()` 只内置识别 `glm-5.2`、`minimax-m3`、Anthropic 系列等），自定义模型算出来是 0 个变体，配置里一旦声明 `variants`，该模型会被整体丢弃、不出现在模型列表里（连 `variants: {}` 也会）。切换思考强度只能靠**多个 model 条目**。
+**配置里不要写 `variants` 字段，但 variant 切换本身是可用的——这两件事不冲突。**
+
+先说哪件不能做：在 model 条目里声明 `variants` 会让该模型被整体丢弃、从模型列表消失（连 `variants: {}` 也会）。原因在源码 `provider/transform.ts`：`variants()` 的 `@ai-sdk/openai-compatible` 分支虽然会自动生成档位，但 opencode 还会拿模型 ID 去匹配它内置的硬编码表（`glm-5.2`、`minimax-m3`、Anthropic 系列等），自定义模型匹配不上，配置里再声明就校验失败。
+
+再说哪件能用：**opencode 会自动为 openai-compatible 模型生成 variant 档位**，取值来自 `WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]`，映射为 `{ reasoningEffort: <档位> }`——正好是 Strata 需要的请求参数。在 TUI 里选好模型后会弹出 variant 窗口（`DialogVariant`），选择结果**持久化到 `~/.local/state/opencode/model.json`**，跨会话有效。
+
+**各档位的实际效果**（用 curl 直连测量，绕开 opencode 的 agent 循环干扰；同一问题各跑一次）：
+
+| 档位 | 完成 tok | 思考字数 | 正文 |
+|------|---------|---------|------|
+| `none` | 852 | **0** | 1415 字 |
+| `low` | 832 | 521 | 759 字 |
+| `medium` | 1204 | 948 | 927 字 |
+| `high` | 5495 | **15196** | 1011 字 |
+
+`none` 的正文反而最长（无规划时写得更啰嗦），但总 token 只有 `high` 的 1/6.4。
+
+> `low`/`medium`/`high` 是模型训练时注入的**软指令**，不是硬上限——差异在难题上才放大，简单问题上三者接近。要可靠上限请用服务端的 `reasoning_budget_tokens`（见下）。
+>
+> 上表测的是**单次请求**，刻意绕开 opencode 的 agent 循环。经 opencode 时每轮对话会发多个请求（辅助调用 + 多轮 agent），无法从服务端日志归因到某一档位的整体效果——**想验证档位差异就用 curl 直连服务端**，不要用 opencode 跑。
+
+**`none` 不在 variant 档位里**，需要单独一个 model 条目。原因是 `none` 与另外三个不是同一个轴：`low`/`medium`/`high` 是「开启思考」模式下的强度档位，`none` 是**关闭思考**（模板渲染成空的 `<think></think>`）。
+
+### ⚠️ variant 选择会持久化，并覆盖条目的 options
+
+这是最容易踩的坑。在 TUI 的 variant 窗口里选一次，选择会写进 `~/.local/state/opencode/model.json` 的 `variant` 字段，**此后该模型一直套用它，跨会话有效**，条目里的 `options.reasoningEffort` 不再生效。
+
+```json
+// ~/.local/state/opencode/model.json
+"variant": { "strata/strata": "high" }   // ← 这一条会一直覆盖 model 条目
+```
+
+排查「条目写 high 却没在想」时先看这里。要恢复成由条目控制，在 variant 窗口选 **Default**（等价于删掉该键），或直接删掉对应的键。
+
+`opencode run --model provider/model#variant` 同样会写入这个状态，因此**用它做测试会污染后续所有请求**——测试档位请用 curl 直连服务端，或测完清理该键。
 
 ### Strata 专用条目
 
-Strata 接受任意模型名（服务端忽略该字段），`limit.output` 必须给思考留足余量——实测 `output: 8192` 时难题的思考会吃光全部预算，返回**空正文**（`finish_reason: length`）；官方建议 `32768`。服务端另有 `reasoning_budget_tokens: 16384` 兜底，思考到上限会强制收尾再作答。
+Strata 接受任意模型名（服务端忽略该字段），故条目名可自定义——**把区分词放在名字最前面**，否则 TUI 截断后几个条目看起来一样。
+
+`limit.output` 必须给思考留足余量：实测 `8192` 时难题的思考会吃光全部预算，返回**空正文**（`finish_reason: length`），官方建议 `32768`。
+
+当前配置（2 个条目 + variant 切档）：
 
 ```json
 "strata": {
@@ -246,12 +284,35 @@ Strata 接受任意模型名（服务端忽略该字段），`limit.output` 必�
   "name": "Strata (Qwen3.8-Flash-Next 125B)",
   "settings": { "baseURL": "http://localhost:8089/v1", "apiKey": "anything" },
   "models": {
-    "strata":        { "name": "Qwen3.8-Flash-Next (high, 默认)", "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] }, "limit": { "context": 131072, "output": 32768 }, "options": { "reasoningEffort": "high" } },
-    "strata-medium": { "name": "Qwen3.8-Flash-Next (medium)",     "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] }, "limit": { "context": 131072, "output": 32768 }, "options": { "reasoningEffort": "medium" } },
-    "strata-low":    { "name": "Qwen3.8-Flash-Next (low, 快)",    "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] }, "limit": { "context": 131072, "output": 32768 }, "options": { "reasoningEffort": "low" } },
-    "strata-none":   { "name": "Qwen3.8-Flash-Next (no think)",   "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] }, "limit": { "context": 131072, "output": 32768 }, "options": { "reasoningEffort": "none" } }
+    "strata": {
+      "name": "Strata high｜默认（variant 可切 low/medium）",
+      "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 131072, "output": 32768 },
+      "options": { "reasoningEffort": "high" }
+    },
+    "strata-none": {
+      "name": "Strata none｜不思考（最快）",
+      "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 131072, "output": 32768 },
+      "options": { "reasoningEffort": "none" }
+    }
   }
 }
 ```
 
-四个条目共用同一端点，靠 `options.reasoningEffort` 区分强度（模型名写什么都行）。Strata 只有 **1 个 slot**，并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成，不影响用，但别指望并行加速。
+用法对照：
+
+| 想要的效果 | 操作 |
+|-----------|------|
+| 默认（质量优先） | 选 `strata`，不选 variant |
+| 中等 / 快 | 选 `strata` + variant `medium` / `low` |
+| 最快、完全不思考 | 选 `strata-none` |
+
+服务端还有两个兜底键，写在 `strata-data/config/strata-iq3_s.json`（改后需重启容器）：
+
+| 键 | 值 | 作用 |
+|----|-----|------|
+| `reasoning_budget_tokens` | `16384` | 思考硬上限，到点强制收尾再作答，保证不会出现空正文 |
+| `fit_max_tokens` | `true` | `prompt + max_tokens` 超上下文时自动压缩，而非返回 400 |
+
+**Strata 只有 1 个 slot**，并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成（总耗时是**累加**，不是取最大），且排队中的请求 6.5ms 就拿到响应头，不会触发客户端超时。日常单任务无影响；并行 subagent 会退化成串行。
