@@ -27,7 +27,7 @@
 | AIME (竞赛数学) | 96%/98.7% | - | 91.0%/91.0% | 92.7%/92.7% | 88.3% | ~ | ~88% | - (world model) | - ² |
 | MMLU (知识测试) | 85.3% | - | 85.3% | 86.1% | 85.2% | ~ | ~85.5% | - (world model) | - ² |
 
-¹ Strata 不是 llama.cpp：它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29GB 查找表），因此能在单张 16GB 卡上跑 125B MoE。**常态占 94.7% 显存，但可用 `POST /v1/vram` 按需让出（`vram_elastic`，实测 22 ms 放出 5.36 GiB），无须再停容器；只有 1 个 slot（串行），不适合并发辅助任务。** 部署步骤见 [Strata 部署](#strata-部署)。
+¹ Strata 不是 llama.cpp：它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29GB 查找表），因此能在单张 16GB 卡上跑 125B MoE。**常态占 95.2% 显存，但可用 `POST /v1/vram` 按需让出（`vram_elastic`，实测 22 ms 放出 5.36 GiB），无须再停容器；并发方面引擎虽支持 `"parallel": 2..8`，但本机实测是负收益（见 §3），保持单 slot 更快。** 部署步骤见 [Strata 部署](#strata-部署)。
 
 ² 官方 model card 未报告 SWE-bench Verified / AIME / MMLU，无法与本表其它列同口径并列。其自报的另一套基准分数为：SWE-bench Pro 62.5、SWE-bench Multilingual 81.0、LiveCodeBench v6 91.9、GPQA Diamond 91.7、HLE 35.9、DeepSWE 1.1 58.7、NL2Repo-Bench 48.1、CoWorkBench 73.9、AndroidWorld 84.5、LVBench 76.6、ERQA 72.3、RealWorldQA 88.5（出处：[Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next)，评测条件见其 card 脚注）。
 
@@ -136,7 +136,7 @@ sha256sum llama-xxx/models/SomeFile.gguf   # 与上面的 oid 对照
 
 `strata/` 是独立引擎 [Niko1221/Strata](https://github.com/Niko1221/Strata)（gitignored），只跑 Qwen3.8-Flash-Next，模型数据落在同级的 `strata-data/`（约 93 GB，也 gitignored）。它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29 GB 查找表），因此能在单张 16 GB 卡上跑 125 B MoE。
 
-**与 llama.cpp 项目共用的只有 `run.sh`**，其余（镜像构建、模型下载、配置结构）都不适用。
+**与 llama.cpp 项目共用 `run.sh` 和 `download-helper/`**（HF 下载路径完全通用，Strata 的分片就用它下，见 [2.1](#21-gguf-分片用-download-helper-预置)），其余（镜像构建、配置结构）不适用。
 
 ### 1. clone 引擎并构建镜像
 
@@ -194,7 +194,7 @@ git pull
 
 #### 2.1 GGUF 分片：用 `download-helper` 预置
 
-`setup.py` 接受预置文件，命中就跳过、不会重下（`strata/setup.py:766` 看到 `.done` 标记直接返回；`:797` 文件存在且 size 等于 HEAD 的 `Content-Length` 就补标记再返回）。所以直接用上面的 `download-helper` 流程预置，保持**原文件名和子目录结构**：
+`setup.py` 的 `download()` 接受预置文件，命中就跳过、不会重下（有 `.done` 标记直接返回；文件存在且 size 等于 HEAD 的 `Content-Length` 就补标记再返回）。所以直接用上面的 `download-helper` 流程预置，保持**原文件名和子目录结构**：
 
 ```bash
 # 当前 MODEL=IQ3_S 时是这两个分片；换尺寸改 --include 里的目录名
@@ -210,7 +210,7 @@ docker run --rm --name download-strata-shards \
 
 落盘路径须是 `strata-data/models/IQ3_S/<原名>`（`hfd.sh` 保留仓库内的子目录，`--local-dir` 指到 `models/` 即可）。
 
-hf-mirror 对 setup.py 用的 pinned revision（`setup.py:66` 的 commit `ed59f920…`）返回 308 未缓存，所以走 `main`——当前 `main` HEAD 恰好等于该 commit，但**将来会漂移**。这些分片 setup.py 只按 size 校验、不查 sha256，想严格校验就按[下载模型文件](#下载模型文件)那节取 `lfs.oid` 比对。
+hf-mirror 对 setup.py 用的 pinned revision（`setup.py` 的 `HF_REVISIONS` 里那个 commit `ed59f920…`）返回 308 未缓存，所以走 `main`——当前 `main` HEAD 恰好等于该 commit，但**将来会漂移**。这些分片 setup.py 只按 size 校验、不查 sha256，想严格校验就按[下载模型文件](#下载模型文件)那节取 `lfs.oid` 比对。
 
 #### 2.2 MTP 张量：拆 `mtp_fetch.py` 的过滤并行
 
@@ -254,9 +254,9 @@ python3 tools/mtp_fetch.py verify --out ../strata-data/mtp   # 退出码 0 = 全
   curl -s -X POST -H 'Content-Type: application/json' -d '{"reserve_mib": null}'  http://127.0.0.1:8089/v1/vram
   ```
   ⚠️ 长回**只到 3399/3786 槽位**（引擎遵守启动时的 700 MiB 预留 + 512 MiB 分段粒度，再调 `null` 也不会更高），速度约 94%；**要拿满缓存得 `docker restart strata`**。
-- **只有 1 个 slot（串行）**，不适合做并发辅助任务。
+- **并发：引擎支持 `"parallel": 2..8`，但本机实测是负收益，不要开**。2 个并发请求 × 256 token：1 slot 下分别 3.8 s / 8.0 s（总 8.0 s，全速 + MTP）；`parallel: 2` 下 9.5 s / 9.5 s（总 9.5 s，反而更慢）。三个原因：① slot 里的请求**不能用 MTP 草稿**（一个 window 一个 token）；② decode 的瓶颈是共享的 CPU 专家池，加 slot 不增吞吐；③ 92% 的专家不在 VRAM 里，slot 占的 1.46 GiB 只能从专家缓存里挖（3786→3026 slots，**单请求 −9.4%**）。引擎文档也只推荐「专家大部分装进 VRAM」时开。
 - **`HF_ENDPOINT=https://hf-mirror.com` 必需**：容器内解析不到 `huggingface.co`（DNS 被污染），已在 `strata/docker-compose.yml` 里设好。
-- **切尺寸**：改 compose 里 `MODEL`（`Q2_0`/`IQ2_XS`/`IQ3_XXS`/`IQ3_S`/`Coder`/`Swift`）后 **`./run.sh strata down` 再 `up -d`**——直接改 compose 后 `up -d` 不会重建容器。分片表与 vision encoder 共用，已缓存的不重复下载。
+- **切尺寸**：改 compose 里 `MODEL`（`Q2_0`/`IQ2_XS`/`IQ3_XXS`/`IQ3_S`/`UD-IQ4_XS`/`Coder`/`Swift`）后 **`./run.sh strata down` 再 `up -d`**——直接改 compose 后 `up -d` 不会重建容器。分片表与 vision encoder 共用，已缓存的不重复下载。
 - **配置位置**：serving / 采样参数在 `strata-data/config/strata-<尺寸>.json`，chat template kwargs 在 `strata/docker-compose.yml` 的环境变量里。
 - **改 config 后必须 `docker restart strata`**：`up -d` 对运行中的容器是 no-op，只有重启才会重读 config。（`docker restart` 会触发引擎干净退出 → 自动保存学习型 profile，见下。）
 - **首次启动**仍会跑 `setup.py` 做格式转换（生成 `strata-data/packs/`），此时 CPU / 磁盘占用高属正常。
@@ -529,7 +529,7 @@ Strata 接受任意模型名（服务端忽略该字段），故条目名可自�
 | `reasoning_budget_tokens` | `16384` | 思考硬上限，到点强制收尾再作答，保证不会出现空正文 |
 | `fit_max_tokens` | `true` | `prompt + max_tokens` 超上下文时收敛输出长度，而非返回 400 |
 
-> ⚠️ **改这两个键必须重启容器**：`serve/server.py:2940` 只在启动时读一次并存进 `self.fit_max_tokens`，之后不再看配置文件。`docker compose restart` 不够（entrypoint 不会重跑），要 `./run.sh strata down` 再 `up -d`。启动日志里能看到是否真的生效：
+> ⚠️ **改这两个键必须重启容器**：服务器只在启动时读一次配置（`fit_max_tokens` 存进 `self.fit_max_tokens`），之后不再看配置文件。**`docker restart strata` 就够**——它会重跑 entrypoint 并重读 config（`vram_elastic`、`--pool-workers` 都是这样生效的）；只有**改 compose 文件**才需要 `./run.sh strata down` 再 `up -d`。启动日志里能看到是否真的生效：
 >
 > ```
 > server 0.0.0.0:8080, gpu 0, fit_max_tokens true, reasoning_budget_tokens 16384
@@ -538,7 +538,7 @@ Strata 接受任意模型名（服务端忽略该字段），故条目名可自�
 
 #### 上下文溢出：`fit_max_tokens` 能救什么、救不了什么
 
-`serve/server.py:1379` 的可用余量是 `room = 131072 - 8 - prompt_tokens`（`CTX_SLACK = 8`）。行为分三种：
+`serve/server.py` 里的可用余量是 `room = ctx - CTX_SLACK - len(ids)`（`CTX_SLACK = 8`）。行为分三种：
 
 | 情形 | 行为 |
 |------|------|
@@ -546,7 +546,7 @@ Strata 接受任意模型名（服务端忽略该字段），故条目名可自�
 | `max_tokens > room` 且 `fit_max_tokens: true` | **收敛**到 `room`，HTTP 200 |
 | `room < 1`（prompt ≥ 131064） | **仍然报错**，与 `fit_max_tokens` 无关 |
 
-第三种是硬天花板：`server.py:1381` 的 `room < 1` 判断在 `fit_max_tokens` 分支**之前**，那时只会 `raise`。
+第三种是硬天花板：`serve/server.py` 里 `room < 1` 的判断在 `fit_max_tokens` 分支**之前**，那时只会 `raise`。
 
 实测（复现 opencode 报错的同一组数字）：
 
@@ -585,4 +585,4 @@ opencode 的阈值算法在 `packages/opencode/src/session/overflow.ts`：
 
 **还有一层：压缩只在 turn 收尾时检查**（`session/processor.ts:753-758`，拿上一轮的 `usage.tokens` 判断）。所以单个 turn 内新增的工具输出可以把 prompt 一次性顶过阈值——这正是 opencode 报 `prompt (102847) + max tokens (29117) exceeds the context` 的成因：上一轮结束时还没到 99072，这一轮就被顶过去了。`reserved` 留的 45000 缓冲就是为这种情况兜的底。
 
-**Strata 只有 1 个 slot**，并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成（总耗时是**累加**，不是取最大），且排队中的请求 6.5ms 就拿到响应头，不会触发客户端超时。日常单任务无影响；并行 subagent 会退化成串行。
+**Strata 默认 1 个 slot**（引擎其实支持 `"parallel": 2..8`，但本机实测负收益，见 [3. 配置与运行要点](#3-配置与运行要点)），并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成（总耗时是**累加**，不是取最大），且排队中的请求 6.5ms 就拿到响应头，不会触发客户端超时。日常单任务无影响；并行 subagent 会退化成串行。
