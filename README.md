@@ -27,7 +27,7 @@
 | AIME (竞赛数学) | 96%/98.7% | - | 91.0%/91.0% | 92.7%/92.7% | 88.3% | ~ | ~88% | - (world model) | - ² |
 | MMLU (知识测试) | 85.3% | - | 85.3% | 86.1% | 85.2% | ~ | ~85.5% | - (world model) | - ² |
 
-¹ Strata 不是 llama.cpp：它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29GB 查找表），因此能在单张 16GB 卡上跑 125B MoE。**它独占 94.7% 显存，启动前须停掉其它模型容器；且只有 1 个 slot（串行），不适合并发辅助任务。** 首次启动需先构建镜像（见 [AGENTS.md](AGENTS.md)），并会下载约 85GB 模型、转换格式，耗时数小时。
+¹ Strata 不是 llama.cpp：它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29GB 查找表），因此能在单张 16GB 卡上跑 125B MoE。**它独占 94.7% 显存，启动前须停掉其它模型容器；且只有 1 个 slot（串行），不适合并发辅助任务。** 部署步骤见 [Strata 部署](#strata-部署)。
 
 ² 官方 model card 未报告 SWE-bench Verified / AIME / MMLU，无法与本表其它列同口径并列。其自报的另一套基准分数为：SWE-bench Pro 62.5、SWE-bench Multilingual 81.0、LiveCodeBench v6 91.9、GPQA Diamond 91.7、HLE 35.9、DeepSWE 1.1 58.7、NL2Repo-Bench 48.1、CoWorkBench 73.9、AndroidWorld 84.5、LVBench 76.6、ERQA 72.3、RealWorldQA 88.5（出处：[Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next)，评测条件见其 card 脚注）。
 
@@ -35,27 +35,86 @@
 
 ### 下载模型文件
 
+`download-helper/` 是唯一入口：一个装了 `hfd.sh` + `aria2c` 的薄镜像。
+
+**先判断 hf-mirror 有没有缓存你要的文件**——这一步决定用哪个代理方案，跳过会白等几小时：
+
+```bash
+curl -sI "https://hf-mirror.com/Owner/Repo/resolve/main/SomeFile.gguf" | head -1
+```
+
+| 响应 | 含义 | 走哪个方案 |
+|------|------|-----------|
+| `200` / `302` | 已缓存 | **方案 A** |
+| `308` | 未缓存，跳到 `huggingface.co` | **方案 B** |
+
 ```bash
 cd download-helper
 docker build -t download-helper:latest .
 
-docker run --rm \
+# 方案 A：hf-mirror 已缓存 —— 不设代理
+docker run --rm --name download-`basename $PWD` \
   --network host \
   -v xxx/local-llm/llama-xxx/models:/models \
   -u "$(id -u):$(id -g)" \
   -e HF_ENDPOINT=https://hf-mirror.com \
+  download-helper:latest \
+  bash -c "/hfd.sh unsloth/ModelRepoID --include 'SomeFile.gguf' --local-dir /models -x 10"
+
+# 方案 B：hf-mirror 未缓存 —— 移除 HF_ENDPOINT，走代理直连 huggingface.co
+docker run --rm --name download-`basename $PWD` \
+  --network host \
+  -v xxx/local-llm/llama-xxx/models:/models \
+  -u "$(id -u):$(id -g)" \
   -e HTTP_PROXY=http://127.0.0.1:PORT \
   -e HTTPS_PROXY=http://127.0.0.1:PORT \
   download-helper:latest \
-  bash -c "/hfd.sh unsloth/ModelRepoID --include ModelFileName --local-dir /models -x 10"
+  bash -c "/hfd.sh unsloth/ModelRepoID --include 'SomeFile.gguf' --local-dir /models -x 10"
 ```
 
-**下载后验证**：`ls -lh` 检查文件大小是否与 Hugging Face 页面一致。远小于预期则可能是 CDN 异常，加 `--network host` 重试。
+四个参数都不能省：
+
+- **`--network host`** —— 容器内的 `127.0.0.1` ≠ 宿主的 `127.0.0.1`，不共享网络就访问不到宿主代理。
+- **`-x 10`** —— 这是 **aria2c 的「每个文件 10 条连接」**，不是总并发。大文件下载时**不能降**：hf-mirror 对单条连接限速，实测会从开头的 9 MB/s 掉到 180 KB/s。
+- **`-u "$(id -u):$(id -g)"`** —— 免得下载出来的文件属 root。
+- **容器名固定 `download-<project>`** —— 便于下次运行前清理。中断后先 `docker rm -f download-<project>` 再重跑。
+
+**取官方文件列表**（确认 mmproj、分片的准确文件名）：
+
+```bash
+curl -s "https://huggingface.co/api/models/Owner/Repo" --proxy http://127.0.0.1:PORT |
+  python3 -c "import json,sys; [print(f['rfilename']) for f in json.load(sys.stdin)['siblings']]"
+```
+
+**下载后验证**：拿 HF 的 LFS sha256 逐个比对，比只看大小可靠（`lfs.oid` 就是文件的 sha256）：
+
+```bash
+curl -s "https://huggingface.co/api/models/Owner/Repo/tree/main" --proxy http://127.0.0.1:PORT |
+  python3 -c "
+import json,sys
+for f in json.load(sys.stdin):
+    print(f\"{f['size']:>15,}  {(f.get('lfs') or {}).get('oid','-')}  {f['path']}\")"
+
+sha256sum llama-xxx/models/SomeFile.gguf   # 与上面的 oid 对照
+```
 
 ```bash
 # 监控下载进度（可选）
 ./monitor.sh gpt-oss-20b gpt-oss-20b-Q4_K_M.gguf
 ```
+
+### 下载诊断与脚本
+
+本仓库只提供 `download-helper/` 这条 HF 下载路径。诊断限速类型、以及下面两个非 HF 场景的脚本，都在 **docker-builder 技能**里（`~/.agents/skills/docker-builder/`）：
+
+| 文件 | 用途 |
+|------|------|
+| `scripts/net-probe.sh` | 判断瓶颈是「按连接限速」还是「总带宽上限」——长连接速率 << 短请求速率就是前者，加并发有效 |
+| `scripts/parallel-fetch.py` | 并行分块下载大文件：切块 + 每块一条独立 range 请求，规避按连接限速；manifest 驱动，逐文件校验 sha256，支持断点续传 |
+| `scripts/pull-docker-image.py` | 拉 Docker 镜像并 `docker load` 导入，绕开被限速的 `docker pull`（见 [2.3](#23-基础镜像绕开被限速的-docker-pull)） |
+| `references/download-speed-diagnosis.md` | 限速类型的完整判读与实测数据 |
+
+> 这些脚本**不在本仓库内**，换机器需自行获取。
 
 ### 启动
 
@@ -69,15 +128,101 @@ docker run --rm \
 | gemma4-12b | 8086 | 256K | `./run.sh gemma4-12b up -d` |
 | gemma4-26BA4B | 8087 | 256K | `./run.sh gemma4-26BA4B up -d` |
 | gemma4-26b-qat | 8088 | 256K | `./run.sh gemma4-26b-qat up -d` |
-| strata | 8089 | 128K | 需先构建镜像 ¹ |
+| strata | 8089 | 128K | 见 [Strata 部署](#strata-部署) ¹ |
 
-¹ Strata 与上面 8 个模型有三点差异，其余配置见 `strata/docker-compose.yml`，构建步骤见 [AGENTS.md](AGENTS.md)：
+¹ Strata 是独立引擎、非 llama.cpp，结构上与上面 8 个项目不同类。首次部署要额外构建镜像和预置模型文件，完整步骤见下节。
 
-1. **首次须先构建镜像**（上游 Dockerfile 要编译 CUDA 引擎，20~40 分钟），否则 `./run.sh strata up -d` 直接失败。
-2. **独占 94.7% 显存**，启动前须停掉其它模型容器；且只有 1 个 slot（串行），不适合并发辅助任务。
-3. **首次启动会下载约 85GB 模型并转换格式**（落到 `strata-data/`，完成后约 93GB），耗时数小时、期间系统卡顿属正常。容器内解析不到 `huggingface.co`（DNS 被污染），已在 compose 里设 `HF_ENDPOINT=https://hf-mirror.com`。
+## Strata 部署
 
-尺寸可换：改 compose 里 `MODEL` 后重启即可，`Q2_0` / `IQ2_XS` / `IQ3_XXS` / `IQ3_S` / `Coder` / `Swift` 共用已缓存的分片表与 vision encoder。
+`strata/` 是独立引擎 [Niko1221/Strata](https://github.com/Niko1221/Strata)（gitignored），只跑 Qwen3.8-Flash-Next，模型数据落在同级的 `strata-data/`（约 93 GB，也 gitignored）。它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29 GB 查找表），因此能在单张 16 GB 卡上跑 125 B MoE。
+
+**与 llama.cpp 项目共用的只有 `run.sh`**，其余（镜像构建、模型下载、配置结构）都不适用。
+
+### 1. clone 引擎并构建镜像
+
+上游 Dockerfile 在 build 时编译 CUDA 引擎，**20~40 分钟**，且 `CUDA_ARCHITECTURES` 要按显卡代次填：
+
+| 显卡 | RTX 50 系 | 40 系 | 30 系 | A 系 |
+|------|----------|------|------|------|
+| `CUDA_ARCHITECTURES` | `120` | `89` | `86` | `80` |
+
+```bash
+git clone https://github.com/Niko1221/Strata.git strata
+
+cd strata
+docker build -t strata:upstream --build-arg CUDA_ARCHITECTURES=120 .
+
+# 派生层：把 /opt/strata 交给宿主用户，使 bind mount 产生的文件不属 root
+docker build -t strata:latest -f Dockerfile.local \
+  --build-arg HOST_UID=$(id -u) --build-arg HOST_GID=$(id -g) .
+```
+
+`Dockerfile.local` 这层是必需的：上游镜像以 root 运行，`/opt/strata` 又是 bind mount 的宿主目录，不 chown 的话 `strata-data/` 里的文件会全属 root、后续层就没法增量写。
+
+之后用常规方式启动：`./run.sh strata up -d`。
+
+### 2. 下载模型文件
+
+⚠️ **不要让 `setup.py` 自己下载模型。** 它是单连接，实测会被 hf-mirror 限速到 0.6 MB/s，85 GB 的 ETA 是 34 小时——实际不可用。三个部分分别处理：
+
+#### 2.1 GGUF 分片：用 `download-helper` 预置
+
+`setup.py` 接受预置文件，命中就跳过、不会重下（`strata/setup.py:766` 看到 `.done` 标记直接返回；`:797` 文件存在且 size 等于 HEAD 的 `Content-Length` 就补标记再返回）。所以直接用上面的 `download-helper` 流程预置，保持**原文件名和子目录结构**：
+
+```bash
+# 当前 MODEL=IQ3_S 时是这两个分片；换尺寸改 --include 里的目录名
+docker run --rm --name download-strata-shards \
+  --network host \
+  -v xxx/local-llm/strata-data/models:/models \
+  -u "$(id -u):$(id -g)" \
+  -e HF_ENDPOINT=https://hf-mirror.com \
+  download-helper:latest \
+  bash -c "/hfd.sh ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF \
+           --include 'IQ3_S/*' --local-dir /models -x 10"
+```
+
+落盘路径须是 `strata-data/models/IQ3_S/<原名>`（`hfd.sh` 保留仓库内的子目录，`--local-dir` 指到 `models/` 即可）。
+
+hf-mirror 对 setup.py 用的 pinned revision（`setup.py:66` 的 commit `ed59f920…`）返回 308 未缓存，所以走 `main`——当前 `main` HEAD 恰好等于该 commit，但**将来会漂移**。这些分片 setup.py 只按 size 校验、不查 sha256，想严格校验就按[下载模型文件](#下载模型文件)那节取 `lfs.oid` 比对。
+
+#### 2.2 MTP 张量：拆 `mtp_fetch.py` 的过滤并行
+
+MTP 张量（落在 `strata-data/mtp/`）由引擎自带的 `tools/mtp_fetch.py` 拉，本身是**串行**的，5.21 GB 排成一队约 2.8 小时。它有 `inventory` / `fetch` / `verify` 三个子命令，`fetch` 支持 `--only <子串>` 过滤，且各实例写各自的 `.bin` 文件、互不冲突——利用这点并行：
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+cd strata
+# 96% 的体积集中在下面三个张量上，拆 3 路约 1 小时
+python3 tools/mtp_fetch.py fetch --out ../strata-data/mtp \
+  --only mtp.layers.0.mlp.experts.gate_up_proj &
+python3 tools/mtp_fetch.py fetch --out ../strata-data/mtp \
+  --only mtp.layers.0.mlp.experts.down_proj &
+python3 tools/mtp_fetch.py fetch --out ../strata-data/mtp \
+  --only mtp.layers.0.self_attn &
+wait
+
+# 关键收尾：补齐剩下的小张量并写出完整 manifest
+python3 tools/mtp_fetch.py fetch  --out ../strata-data/mtp
+python3 tools/mtp_fetch.py verify --out ../strata-data/mtp   # 退出码 0 = 全部张量正确
+```
+
+并行安全的前提是 **`--only` 的过滤互不重叠**，否则会互相覆盖；每个张量下完都会按脚本内置的 pinned revision sha256 校验。**那步不带 `--only` 的完整 `fetch` 不能省**——小张量和 `mtp-manifest.json` 是它写的。
+
+#### 2.3 基础镜像：绕开被限速的 `docker pull`
+
+`docker pull` 用单条连接下载 blob，遇到按连接限速的 registry 会爬到几小时。可选做法是自己走 registry HTTP API：匿名取 token → 解析 manifest → 列出每个 blob 的 digest 与大小 → 分块并发逐个拉取 → 校验 sha256 → 装配成 **docker-archive** tar → `docker load`。
+
+格式上有个坑：**存储驱动是 `overlay2`（未启用 containerd 镜像存储）时，`docker load` 只认 docker-archive**，即 `<config>.json` + `manifest.json` + 各 `<id>/layer.tar`，且**层必须是未压缩的 tar**。直接喂 OCI layout（`oci-layout` + `index.json` + `blobs/sha256/*`）会报 `blobs/json: no such file or directory`。
+
+现成脚本见 [下载诊断与脚本](#下载诊断与脚本)。
+
+### 3. 配置与运行要点
+
+- **显存互斥**：占 94.7%（15.4/16.3 GB），启动前必须停掉 llama.cpp 容器；只有 1 个 slot（串行），不适合做并发辅助任务。
+- **`HF_ENDPOINT=https://hf-mirror.com` 必需**：容器内解析不到 `huggingface.co`（DNS 被污染），已在 `strata/docker-compose.yml` 里设好。
+- **切尺寸**：改 compose 里 `MODEL`（`Q2_0`/`IQ2_XS`/`IQ3_XXS`/`IQ3_S`/`Coder`/`Swift`）后 **`./run.sh strata down` 再 `up -d`**——直接改 compose 后 `up -d` 不会重建容器。分片表与 vision encoder 共用，已缓存的不重复下载。
+- **配置位置**：serving / 采样参数在 `strata-data/config/strata-<尺寸>.json`，chat template kwargs 在 `strata/docker-compose.yml` 的环境变量里。
+- **首次启动**仍会跑 `setup.py` 做格式转换（生成 `strata-data/packs/`），此时 CPU / 磁盘占用高属正常。
 
 ## 采样参数配置
 
