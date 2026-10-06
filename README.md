@@ -52,22 +52,14 @@ curl -sI "https://hf-mirror.com/Owner/Repo/resolve/main/SomeFile.gguf" | head -1
 cd download-helper
 docker build -t download-helper:latest .
 
-# 方案 A：hf-mirror 已缓存 —— 不设代理
 docker run --rm --name download-`basename $PWD` \
   --network host \
   -v xxx/local-llm/llama-xxx/models:/models \
   -u "$(id -u):$(id -g)" \
-  -e HF_ENDPOINT=https://hf-mirror.com \
-  download-helper:latest \
-  bash -c "/hfd.sh unsloth/ModelRepoID --include 'SomeFile.gguf' --local-dir /models -x 10"
-
-# 方案 B：hf-mirror 未缓存 —— 移除 HF_ENDPOINT，走代理直连 huggingface.co
-docker run --rm --name download-`basename $PWD` \
-  --network host \
-  -v xxx/local-llm/llama-xxx/models:/models \
-  -u "$(id -u):$(id -g)" \
-  -e HTTP_PROXY=http://127.0.0.1:PORT \
-  -e HTTPS_PROXY=http://127.0.0.1:PORT \
+  -e HF_ENDPOINT=https://hf-mirror.com \   # ← 方案 A（已缓存）到此为止
+  # 方案 B（未缓存）：删掉上面那行，改加下面两行，走代理直连 huggingface.co
+  # -e HTTP_PROXY=http://127.0.0.1:PORT \
+  # -e HTTPS_PROXY=http://127.0.0.1:PORT \
   download-helper:latest \
   bash -c "/hfd.sh unsloth/ModelRepoID --include 'SomeFile.gguf' --local-dir /models -x 10"
 ```
@@ -79,14 +71,7 @@ docker run --rm --name download-`basename $PWD` \
 - **`-u "$(id -u):$(id -g)"`** —— 免得下载出来的文件属 root。
 - **容器名固定 `download-<project>`** —— 便于下次运行前清理。中断后先 `docker rm -f download-<project>` 再重跑。
 
-**取官方文件列表**（确认 mmproj、分片的准确文件名）：
-
-```bash
-curl -s "https://huggingface.co/api/models/Owner/Repo" --proxy http://127.0.0.1:PORT |
-  python3 -c "import json,sys; [print(f['rfilename']) for f in json.load(sys.stdin)['siblings']]"
-```
-
-**下载后验证**：拿 HF 的 LFS sha256 逐个比对，比只看大小可靠（`lfs.oid` 就是文件的 sha256）：
+**取文件名与校验值**（`lfs.oid` 就是文件的 sha256，比只看大小可靠；`siblings` 接口也能列全部文件）：
 
 ```bash
 curl -s "https://huggingface.co/api/models/Owner/Repo/tree/main" --proxy http://127.0.0.1:PORT |
@@ -95,12 +80,8 @@ import json,sys
 for f in json.load(sys.stdin):
     print(f\"{f['size']:>15,}  {(f.get('lfs') or {}).get('oid','-')}  {f['path']}\")"
 
-sha256sum llama-xxx/models/SomeFile.gguf   # 与上面的 oid 对照
-```
-
-```bash
-# 监控下载进度（可选）
-./monitor.sh gpt-oss-20b gpt-oss-20b-Q4_K_M.gguf
+sha256sum llama-xxx/models/SomeFile.gguf            # 与上面的 oid 对照
+./monitor.sh gpt-oss-20b gpt-oss-20b-Q4_K_M.gguf   # 可选：监控下载进度
 ```
 
 ### 下载诊断与脚本
@@ -237,11 +218,7 @@ python3 tools/mtp_fetch.py verify --out ../strata-data/mtp   # 退出码 0 = 全
 
 #### 2.3 基础镜像：绕开被限速的 `docker pull`
 
-`docker pull` 用单条连接下载 blob，遇到按连接限速的 registry 会爬到几小时。可选做法是自己走 registry HTTP API：匿名取 token → 解析 manifest → 列出每个 blob 的 digest 与大小 → 分块并发逐个拉取 → 校验 sha256 → 装配成 **docker-archive** tar → `docker load`。
-
-格式上有个坑：**存储驱动是 `overlay2`（未启用 containerd 镜像存储）时，`docker load` 只认 docker-archive**，即 `<config>.json` + `manifest.json` + 各 `<id>/layer.tar`，且**层必须是未压缩的 tar**。直接喂 OCI layout（`oci-layout` + `index.json` + `blobs/sha256/*`）会报 `blobs/json: no such file or directory`。
-
-现成脚本见 [下载诊断与脚本](#下载诊断与脚本)。
+`docker pull` 单连接下 blob，遇到按连接限速的 registry 会爬到几小时。用 `scripts/pull-docker-image.py`（见 [下载诊断与脚本](#下载诊断与脚本)）走 registry HTTP API 并发拉取、装配成 docker-archive 再 `docker load`。一个坑：**存储驱动是 `overlay2`（未启用 containerd 镜像存储）时 `docker load` 只认 docker-archive**（`<config>.json` + `manifest.json` + 各 `<id>/layer.tar`，且**层必须是未压缩的 tar**），直接喂 OCI layout（`oci-layout` + `index.json` + `blobs/sha256/*`）会报 `blobs/json: no such file or directory`。
 
 ### 3. 配置与运行要点
 
@@ -254,25 +231,28 @@ python3 tools/mtp_fetch.py verify --out ../strata-data/mtp   # 退出码 0 = 全
   curl -s -X POST -H 'Content-Type: application/json' -d '{"reserve_mib": null}'  http://127.0.0.1:8089/v1/vram
   ```
   ⚠️ 长回**只到 3399/3786 槽位**（引擎遵守启动时的 700 MiB 预留 + 512 MiB 分段粒度，再调 `null` 也不会更高），速度约 94%；**要拿满缓存得 `docker restart strata`**。
-- **并发：引擎支持 `"parallel": 2..8`，但本机实测是负收益，不要开**。2 个并发请求 × 256 token：1 slot 下分别 3.8 s / 8.0 s（总 8.0 s，全速 + MTP）；`parallel: 2` 下 9.5 s / 9.5 s（总 9.5 s，反而更慢）。三个原因：① slot 里的请求**不能用 MTP 草稿**（一个 window 一个 token）；② decode 的瓶颈是共享的 CPU 专家池，加 slot 不增吞吐；③ 92% 的专家不在 VRAM 里，slot 占的 1.46 GiB 只能从专家缓存里挖（3786→3026 slots，**单请求 −9.4%**）。引擎文档也只推荐「专家大部分装进 VRAM」时开。
+- **并发：引擎支持 `"parallel": 2..8`，但本机实测是负收益，不要开**。2 个并发请求 × 256 token：1 slot 下分别 3.8 s / 8.0 s（总 8.0 s），`parallel: 2` 下 9.5 s / 9.5 s（总 9.5 s）。slot 里的请求不能用 MTP 草稿、decode 瓶颈是共享的 CPU 专家池、且 slot 占的 1.46 GiB 只能从专家缓存里挖（3786→3026 slots，单请求 −9.4%）。
 - **`HF_ENDPOINT=https://hf-mirror.com` 必需**：容器内解析不到 `huggingface.co`（DNS 被污染），已在 `strata/docker-compose.yml` 里设好。
 - **切尺寸**：改 compose 里 `MODEL`（`Q2_0`/`IQ2_XS`/`IQ3_XXS`/`IQ3_S`/`UD-IQ4_XS`/`Coder`/`Swift`）后 **`./run.sh strata down` 再 `up -d`**——直接改 compose 后 `up -d` 不会重建容器。分片表与 vision encoder 共用，已缓存的不重复下载。
 - **配置位置**：serving / 采样参数在 `strata-data/config/strata-<尺寸>.json`，chat template kwargs 在 `strata/docker-compose.yml` 的环境变量里。
 - **改 config 后必须 `docker restart strata`**：`up -d` 对运行中的容器是 no-op，只有重启才会重读 config。（`docker restart` 会触发引擎干净退出 → 自动保存学习型 profile，见下。）
 - **首次启动**仍会跑 `setup.py` 做格式转换（生成 `strata-data/packs/`），此时 CPU / 磁盘占用高属正常。
 
-#### 3b. 调优实测结论与坑
+#### 3b. 调优：结论与坑
 
-- **`--pool-workers 14`（+3.6% decode）**：引擎默认给「每物理核减一」= 19 个 worker，但 host 线程是自旋忙等，19+1 = **20 线程占满 20 核**，引擎自己的 PLE I/O 线程、专家拷贝线程、GPU staging 线程抢不到 CPU，于是每一轮 barrier 都被拖长。**收益来自「留出 CPU 余量」，不是「避开 E 核」**——配对实测（同 0.1.39、同 16 prompt）`--pool-workers 7`（纯 P 核）vs `14`（7 P + 7 E）只差 **−0.61%（t=−0.54，p≈0.60，不显著）**，而 14 vs 19 是 **+3.6%（t=3.68）**。所以**不要**费劲去钉 P 核，留余量才是关键。prefill 无影响。
-  钉核结果可直接观测：`grep Cpus_allowed_list /proc/<引擎pid>/task/*/status` —— worker i 落在 **CPU i+1**（升序，P 核在前），host 与引擎辅助线程在 CPU 0（14 workers → CPU 1-14 各一个）。
-  ⚠️ `args` 是 setup 自有键，**重跑 `--setup` 会丢掉这条**。
-- **`expert_profile_save`（已开，零成本）**：作用是跨重启保留自适应层学到的专家路由。落盘路径**必须给绝对路径且放 `/data` 卷上**（相对路径会落在容器可写层，`down` 就没了）。实测首请求命中率 74.3% → 77.6%。它是「用户键」，`--setup` 重跑会保留。
-- **删学习型 profile 要 `docker kill` 而不是 `docker restart`**：引擎在**干净退出时会写回** profile，所以「先删文件再 restart」无效——旧引擎退出时又写了一个，新启动照样读到。正确顺序是 `docker kill strata` → 删文件 → `docker start strata`。
-- **`--pool-affinity` 在本机是 no-op**：引擎靠 `/sys/devices/system/cpu/cpuN/cpu_capacity` 判 P/E 核，本机该文件不存在 → `is_hybrid=false` → `all`/`auto`/`p-cores` 三种取值走同一分支（实测仍报 19 workers）。真要钉核只能用 cgroup `cpuset`，代价是整容器被限制，不推荐。
-- **`--prefill auto:16384` 不可能生效**：chunk 上限虽然抬高，实际大小却受「专家缓存能借出多少」约束——8192 需 4.56 GiB，16384 要约 9.1 GiB ≈ 4800 slots，而总共只有 3786 slots（实测引擎仍选 8192）。显存在每个方向都是硬约束。
-- **`--ple-io ram` 不划算**：给每次 PLE 行读取注入 5 ms 只让 decode 掉 6.6%（约 20% 泄漏到关键路径），而真实 NVMe 非缓冲读延迟仅 0.1–0.2 ms ⇒ 收益 ≲0.3%；代价是把 28.8 GB 的 n-gram 表锁进 RAM，会挤掉 46.84 GiB 专家 arena 的 page cache。
-- **比 tok/s 的方法学（最重要的一条）**：这是推理模型，**任何影响专家计算的配置改动都会改变浮点求和顺序 → 近平分叉 → 思考轨迹不同**，而不同文本的 per-token 代价相差可达数个百分点（引擎文档自己也这么写）。所以跨配置直接比 decode tok/s **是无效的**——我为此两次得出错误结论。可行做法只有两种：① **多 prompt 配对**（同一 prompt 在两个配置下各跑一次，看多个不同 prompt 的差值分布）；② 只比 **prefill**（由输入 token 决定、与输出无关）。另外 `hit_rate` 不是纯缓存指标——走 PCIe 的专家被排除在外，改 `--pcie-frac` 会移动它（0.1.39 起日志多打 `pcie_share`，实测约 16%）。
-- **版本对比（同 16 prompt 配对）**：v0.1.38 → v0.1.39 **+4.30 tok/s（+5.95%），t=5.35，15/16 为正**。
+已采用的设置：
+
+| 设置 | 效果 |
+|------|------|
+| `--pool-workers 14` | decode **+3.6%**——默认 19 会让 19 workers + 自旋 host 占满 20 核，饿死引擎自己的 PLE I/O / 专家拷贝 / GPU staging 线程。收益来自留 CPU 余量，不是避开 E 核。⚠️ `args` 是 setup 自有键，重跑 `--setup` 会丢 |
+| `expert_profile_save`（`/data` 卷上的绝对路径） | 首请求命中率 74.3% → 77.6%，跨重启保留学到的专家路由。是「用户键」，`--setup` 会保留 |
+| `vram_elastic` | 22 ms 放出 5.36 GiB 给别的程序。⚠️ 长回只到 3399/3786 槽位，要拿满缓存需 `docker restart strata` |
+
+三个必须知道的操作坑：
+
+- **删学习型 profile 要 `docker kill`**，不是 `docker restart`：引擎干净退出时会写回，所以「先删文件再 restart」无效（旧引擎退出时又写了一个）。顺序：`docker kill strata` → 删文件 → `docker start strata`
+- **跨配置比 tok/s 必须多 prompt 配对**：这是推理模型，任何影响专家计算的改动都会改变浮点取整 → 思考轨迹不同 → per-token 代价差几个百分点。直接比是无效的（我为此得出过两次错误结论）。可靠做法只有「多 prompt 配对」或「只比 prefill」
+- **别动的**：`--pool-affinity`（本机 no-op）、`--prefill auto:16384`（受专家缓存借用额度限制，不可能生效）、`--ple-io ram`（收益 ≲0.3%，却要占 28.8 GB 挤掉专家 arena）、`"parallel"`（见上一条）
 
 
 ## 采样参数配置
@@ -407,7 +387,7 @@ environment:
 
 ### provider 条目模板
 
-添加到 `~/.config/opencode/opencode.json` 的 `providers` 下（字段名与现有 8 个 llama.cpp provider 一致，实际生效已验证）：
+添加到 `~/.config/opencode/opencode.json` 的 `providers` 下。改完必须执行 `opencode reload`，否则运行中的 server 仍用旧配置（模型不会出现在列表里）：
 
 ```json
 "llama-cpp-xxxx": {
@@ -424,49 +404,14 @@ environment:
 }
 ```
 
-改完配置必须执行 `opencode reload`，否则运行中的 server 仍用旧配置（模型不会出现在列表里）。
+- **多模态**要在 `capabilities.input` 里加 `"image"`，opencode 默认认为自定义 provider 只支持 text，**不声明即无法开启**（[Issue #9897](https://github.com/anomalyco/opencode/issues/9897)）
+- 字段名有两套等价写法（v2.0.22 实测都能用）：本文件在用的 `package`/`settings`/`capabilities` ↔ 官方 schema 的 `npm`/`options`/`modalities`
+- **不要写 `variants` 字段**（会让该模型被整体丢弃、从列表消失），但 opencode 会自动为 openai-compatible 模型生成 `low`/`medium`/`high` 档位（映射为 `reasoningEffort`，正是 Strata 需要的请求参数）
 
-字段名有两套等价写法，本机 v2.0.22 实测**都能用**：`package`/`settings`/`capabilities`（本文件在用）与官方 schema 的 `npm`/`options`/`modalities`。
-
-> 多模态模型：`capabilities.input` 需含 `"image"`（官方写法为 `modalities.input`）。opencode 默认认为自定义 provider 只支持 text 输入，**不声明即无法开启多模态**（[Issue #9897](https://github.com/anomalyco/opencode/issues/9897)）。
-
-**配置里不要写 `variants` 字段，但 variant 切换本身是可用的——这两件事不冲突。**
-
-先说哪件不能做：在 model 条目里声明 `variants` 会让该模型被整体丢弃、从模型列表消失（连 `variants: {}` 也会）。原因在源码 `provider/transform.ts`：`variants()` 的 `@ai-sdk/openai-compatible` 分支虽然会自动生成档位，但 opencode 还会拿模型 ID 去匹配它内置的硬编码表（`glm-5.2`、`minimax-m3`、Anthropic 系列等），自定义模型匹配不上，配置里再声明就校验失败。
-
-再说哪件能用：**opencode 会自动为 openai-compatible 模型生成 variant 档位**，取值来自 `WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]`，映射为 `{ reasoningEffort: <档位> }`——正好是 Strata 需要的请求参数。在 TUI 里选好模型后会弹出 variant 窗口（`DialogVariant`），选择结果**持久化到 `~/.local/state/opencode/model.json`**，跨会话有效。
-
-**各档位的实际效果**（用 curl 直连测量，绕开 opencode 的 agent 循环干扰；同一问题各跑一次）：
-
-| 档位 | 完成 tok | 思考字数 | 正文 |
-|------|---------|---------|------|
-| `none` | 852 | **0** | 1415 字 |
-| `low` | 832 | 521 | 759 字 |
-| `medium` | 1204 | 948 | 927 字 |
-| `high` | 5495 | **15196** | 1011 字 |
-
-`none` 的正文反而最长（无规划时写得更啰嗦），但总 token 只有 `high` 的 1/6.4。
-
-> `low`/`medium`/`high` 是模型训练时注入的**软指令**，不是硬上限——差异在难题上才放大，简单问题上三者接近。要可靠上限请用服务端的 `reasoning_budget_tokens`（见下）。
->
-> 上表测的是**单次请求**，刻意绕开 opencode 的 agent 循环。经 opencode 时每轮对话会发多个请求（辅助调用 + 多轮 agent），无法从服务端日志归因到某一档位的整体效果——**想验证档位差异就用 curl 直连服务端**，不要用 opencode 跑。
-
-**`none` 不在 variant 档位里**，需要单独一个 model 条目。原因是 `none` 与另外三个不是同一个轴：`low`/`medium`/`high` 是「开启思考」模式下的强度档位，`none` 是**关闭思考**（模板渲染成空的 `<think></think>`）。
 
 ### ⚠️ variant 选择会持久化，并覆盖条目的 options
 
-这是最容易踩的坑。在 TUI 的 variant 窗口里选一次，选择会写进 `~/.local/state/opencode/model.json` 的 `variant` 字段，**此后该模型一直套用它，跨会话有效**，条目里的 `options.reasoningEffort` 不再生效。
-
-```json
-// ~/.local/state/opencode/model.json
-"variant": { "strata/strata": "high" }   // ← 这一条会一直覆盖 model 条目
-```
-
-排查「条目写 high 却没在想」时先看这里。要恢复成由条目控制，在 variant 窗口选 **Default**（等价于删掉该键），或直接删掉对应的键。
-
-`opencode run --model provider/model#variant` 同样会写入这个状态，因此**用它做测试会污染后续所有请求**——测试档位请用 curl 直连服务端，或测完清理该键。
-
-**手动删掉这个键可能白删：会话切换会把它写回来。** TUI 在会话 ID 变化时，会从该会话最后一条用户消息里恢复 variant 并重新持久化（`packages/tui/src/component/prompt/index.tsx:305-327`，`local.model.variant.set(msg.model.variant)`）。所以在一个已经用过 `high` 的旧会话里，键会不断复活。彻底清掉要么**新建会话**，要么在 variant 窗口选 Default。
+这是最容易踩的坑：在 TUI 的 variant 窗口选一次，会写进 `~/.local/state/opencode/model.json`，**此后该模型一直套用它、跨会话有效**，条目里的 `options.reasoningEffort` 不再生效。排查「条目写 high 却没在想」先看这里；恢复时在窗口选 **Default**。注意 `opencode run --model provider/model#variant` 也会写入，**用它测试会污染后续所有请求**（且删键会被会话切换写回来）。
 
 ### Strata 专用条目
 
@@ -498,22 +443,6 @@ Strata 接受任意模型名（服务端忽略该字段），故条目名可自�
 }
 ```
 
-#### 命名规则：model 名和 provider 名会被直接拼在一起
-
-输入框下方的显示串由 TUI 拼成（`packages/tui/src/component/prompt/index.tsx:1441-1450`）：
-
-```
-{agent} · {model.name}{provider.name} · {variant}
-```
-
-**中间没有分隔符**——所以两段都会连着读，且当前选中的 variant 以 `·high` 形式跟在最后（`none` 不在档位表里，不会显示）。取值见 `context/local.tsx:266-268`：两段都优先用配置里的 `name`，缺省才回退到 `modelID` / `providerID`。
-
-因此命名要满足两点：**每条模型名自带区分词**（没选 variant 时 `·high` 不显示，两条会撞名），**provider 名要短**（两条共用，省不掉也不该重复占位）。上面这套渲染出来是 29 字符，与云端模型（如 `Space Bunny FreeOpenCode Zen·max`，32 字符）相当。
-
-`name` 纯属显示，调用时用的是 `providerID/modelID`（`opencode models` 也只打这两个），改名不影响任何请求。TUI 没有关闭 provider 名的开关（`packages/tui/src/config/index.tsx` 的 `Info` schema 里没有该项）。
-
-> ⚠️ `strata-none` 也会弹出 `low`/`medium`/`high` 档位——`provider/transform.ts:800-805` 对 `@ai-sdk/openai-compatible` 的**每个**模型都返回这三个值，不看 `options`。在它上面选了档位就会覆盖 `options.reasoningEffort: none`，名字里的 `-None` 随即名不副实。
-
 用法对照：
 
 | 想要的效果 | 操作 |
@@ -536,39 +465,18 @@ Strata 接受任意模型名（服务端忽略该字段），故条目名可自�
 > [strata] thinking budget: 16384 tokens (reasoning_budget_tokens; a request can set its own)
 > ```
 
+#### 命名规则：model 名和 provider 名会被直接拼在一起
+
+TUI 把显示串拼成 `{agent} · {model.name}{provider.name} · {variant}`——**中间没有分隔符**。所以命名要满足两点：**每条模型名自带区分词**（没选 variant 时 `·high` 不显示，两条会撞名），**provider 名要短**（两条共用）。上面这套渲染出来 29 字符，与云端模型相当。`name` 纯属显示，调用用 `providerID/modelID`，改名不影响任何请求。
+
+> ⚠️ `strata-none` 也会弹出 `low`/`medium`/`high` 档位——在它上面选了档位就会覆盖 `options.reasoningEffort: none`，名字里的 `-None` 随即名不副实。
+
+
 #### 上下文溢出：`fit_max_tokens` 能救什么、救不了什么
 
-`serve/server.py` 里的可用余量是 `room = ctx - CTX_SLACK - len(ids)`（`CTX_SLACK = 8`）。行为分三种：
+`fit_max_tokens` 只保证「不 400」，**不保证「有地方写答案」**——可用余量是 `room = 131072 - 8 - prompt_tokens`，prompt ≥ 131064 时 `room < 1` 会**直接报错**（该判断在 `fit_max_tokens` 分支之前，与它无关）。所以 opencode 侧的自动压缩必须比这条线更早触发。
 
-| 情形 | 行为 |
-|------|------|
-| `max_tokens ≤ room` | 正常生成 |
-| `max_tokens > room` 且 `fit_max_tokens: true` | **收敛**到 `room`，HTTP 200 |
-| `room < 1`（prompt ≥ 131064） | **仍然报错**，与 `fit_max_tokens` 无关 |
-
-第三种是硬天花板：`serve/server.py` 里 `room < 1` 的判断在 `fit_max_tokens` 分支**之前**，那时只会 `raise`。
-
-实测（复现 opencode 报错的同一组数字）：
-
-| 请求 | 结果 |
-|------|------|
-| prompt 102785 + `max_tokens` 29117（溢出 830） | HTTP 200，收敛到 28279，正常作答 |
-| prompt 102785 + `max_tokens` 60000 | HTTP 200，同样收敛 |
-| prompt 130978 + `max_tokens` 100（room 仅 86） | HTTP 200，`finish_reason: length`，86 tokens |
-
-#### 为什么还需要调早 opencode 的压缩阈值
-
-`fit_max_tokens` 只保证「不 400」，不保证「有地方写答案」——room 剩多少完全取决于 prompt 长度。所以 opencode 侧的自动压缩必须比这条线更早触发，否则会在压缩生效前先撞上 `room < 1`。
-
-opencode 的阈值算法在 `packages/opencode/src/session/overflow.ts`：
-
-- 未设 `limit.input` 时：`usable = context - min(limit.output, 32000)` = 131072 − 32000 = **99072**
-- 设了 `limit.input` 时：`usable = limit.input - compaction.reserved`
-
-两个容易踩的点：
-
-1. **`compaction.reserved` 只在设了 `limit.input` 时才生效**（`overflow.ts:17-19` 的三元分支），否则那个 45000 根本不参与计算。
-2. **只加 `limit.input` 会让压缩更晚触发**（`usable` 从 99072 变成 111072），必须同时显式设 `reserved`。
+opencode 的阈值算法（`session/overflow.ts`）：未设 `limit.input` 时 `usable = context - min(output, 32000)` = 99072；设了则 `usable = limit.input - compaction.reserved`。两个坑：`compaction.reserved` **只在设了 `limit.input` 时才生效**；只加 `limit.input` 反而让压缩更晚（99072 → 111072），必须同时显式设 `reserved`。
 
 当前配置：
 
@@ -579,10 +487,7 @@ opencode 的阈值算法在 `packages/opencode/src/session/overflow.ts`：
 "limit": { "context": 131072, "input": 131072, "output": 32768 }
 ```
 
-→ `usable = 131072 - 45000 = 86072`，比默认早 13000 tokens。
+→ `usable = 131072 - 45000 = 86072`，比默认早 13000 tokens。还有一层：**压缩只在 turn 收尾时检查**（拿上一轮的 `usage.tokens`），单个 turn 内新增的工具输出能一次顶过阈值——`reserved` 的 45000 就是为这种情况兜底。
 
-> `reserved` 是 v1 配置的字段名；`opencode debug config` 会把它显示成 `buffer`（`core/src/v1/config/migrate.ts:61` 的 v1→v2 改名），值能透传就说明写对了。
-
-**还有一层：压缩只在 turn 收尾时检查**（`session/processor.ts:753-758`，拿上一轮的 `usage.tokens` 判断）。所以单个 turn 内新增的工具输出可以把 prompt 一次性顶过阈值——这正是 opencode 报 `prompt (102847) + max tokens (29117) exceeds the context` 的成因：上一轮结束时还没到 99072，这一轮就被顶过去了。`reserved` 留的 45000 缓冲就是为这种情况兜的底。
 
 **Strata 默认 1 个 slot**（引擎其实支持 `"parallel": 2..8`，但本机实测负收益，见 [3. 配置与运行要点](#3-配置与运行要点)），并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成（总耗时是**累加**，不是取最大），且排队中的请求 6.5ms 就拿到响应头，不会触发客户端超时。日常单任务无影响；并行 subagent 会退化成串行。
