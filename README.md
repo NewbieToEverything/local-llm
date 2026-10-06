@@ -420,14 +420,6 @@ Strata 接受任意模型名（服务端忽略该字段），故条目名可自�
 }
 ```
 
-用法对照：
-
-| 想要的效果 | 操作 |
-|-----------|------|
-| 默认（质量优先） | 选 `strata`，不选 variant |
-| 中等 / 快 | 选 `strata` + variant `medium` / `low` |
-| 最快、完全不思考 | 选 `strata-none` |
-
 服务端还有两个兜底键，写在 `strata-data/config/strata-iq3_s.json`：
 
 | 键 | 值 | 作用 |
