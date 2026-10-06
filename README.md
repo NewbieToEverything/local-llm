@@ -86,14 +86,14 @@ sha256sum llama-xxx/models/SomeFile.gguf            # 与上面的 oid 对照
 
 ### 下载诊断与脚本
 
-本仓库只提供 `download-helper/` 这条 HF 下载路径。诊断限速类型、以及下面两个非 HF 场景的脚本，都在 **docker-builder 技能**里（`~/.agents/skills/docker-builder/`）：
+本仓库只提供 `download-helper/` 这条 HF 下载路径。**限速诊断**与**两个非 HF 场景**（通用大文件、Docker 镜像）的脚本都在 **docker-builder 技能**里（`~/.agents/skills/docker-builder/`）：
 
-| 文件 | 用途 |
-|------|------|
-| `scripts/net-probe.sh` | 判断瓶颈是「按连接限速」还是「总带宽上限」——长连接速率 << 短请求速率就是前者，加并发有效 |
-| `scripts/parallel-fetch.py` | 并行分块下载大文件：切块 + 每块一条独立 range 请求，规避按连接限速；manifest 驱动，逐文件校验 sha256，支持断点续传 |
-| `scripts/pull-docker-image.py` | 拉 Docker 镜像并 `docker load` 导入，绕开被限速的 `docker pull`（见 [2.3](#23-基础镜像绕开被限速的-docker-pull)） |
-| `references/download-speed-diagnosis.md` | 限速类型的完整判读与实测数据 |
+| 类别 | 文件 | 用途 |
+|------|------|------|
+| 诊断 | `scripts/net-probe.sh` | 判断瓶颈是「按连接限速」还是「总带宽上限」——长连接速率 << 短请求速率就是前者，加并发有效 |
+| 诊断 | `references/download-speed-diagnosis.md` | 限速类型的完整判读与实测数据 |
+| 非 HF 下载 | `scripts/parallel-fetch.py` | 并行分块下载大文件：切块 + 每块一条独立 range 请求，规避按连接限速；manifest 驱动，逐文件校验 sha256，支持断点续传 |
+| 非 HF 下载 | `scripts/pull-docker-image.py` | 拉 Docker 镜像并 `docker load` 导入，绕开被限速的 `docker pull`（见 [2.3](#23-基础镜像绕开被限速的-docker-pull)） |
 
 > 这些脚本**不在本仓库内**，换机器需自行获取。
 
