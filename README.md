@@ -296,7 +296,7 @@ curl -X POST http://localhost:8086/v1/chat/completions \
   }'
 ```
 
-> **Strata** 的图像能力是引擎内置的：`strata-<尺寸>.json` 的 `vision` 段 + 共享的 `mmproj-Qwen3.8-Flash-Next-BF16.gguf`，客户端只要在条目里声明 `capabilities.input: ["image"]`（见 [Strata 专用条目](#strata-专用条目)）。
+> **Strata** 的图像能力是引擎内置的：`strata-<尺寸>.json` 的 `vision` 段 + 共享的 `mmproj-Qwen3.8-Flash-Next-BF16.gguf`，客户端只要在条目里声明 `capabilities.input: ["image"]`（当前条目配置见 `~/.config/opencode/opencode.json`）。
 
 ### thinking 模式
 
@@ -390,48 +390,3 @@ environment:
 
 这是最容易踩的坑：在 TUI 的 variant 窗口选一次，会写进 `~/.local/state/opencode/model.json`，**此后该模型一直套用它、跨会话有效**，条目里的 `options.reasoningEffort` 不再生效。排查「条目写 high 却没在想」先看这里；恢复时在窗口选 **Default**。注意 `opencode run --model provider/model#variant` 也会写入，**用它测试会污染后续所有请求**（且删键会被会话切换写回来）。
 
-### Strata 专用条目
-
-Strata 接受任意模型名（服务端忽略该字段），故条目名可自定义。
-
-`limit.output` 必须给思考留足余量：实测 `8192` 时难题的思考会吃光全部预算，返回**空正文**（`finish_reason: length`），官方建议 `32768`。
-
-当前配置（2 个条目 + variant 切档）：
-
-```json
-"strata": {
-  "package": "@opencode/ai/providers/openai-compatible",
-  "name": "Strata",
-  "settings": { "baseURL": "http://localhost:8089/v1", "apiKey": "anything" },
-  "models": {
-    "strata": {
-      "name": "Qwen3.8-Flash-Next",
-      "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] },
-      "limit": { "context": 131072, "input": 131072, "output": 32768 },
-      "options": { "reasoningEffort": "high" }
-    },
-    "strata-none": {
-      "name": "Qwen3.8-Flash-Next-None",
-      "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] },
-      "limit": { "context": 131072, "input": 131072, "output": 32768 },
-      "options": { "reasoningEffort": "none" }
-    }
-  }
-}
-```
-
-服务端还有两个兜底键，写在 `strata-data/config/strata-iq3_s.json`：
-
-| 键 | 值 | 作用 |
-|----|-----|------|
-| `reasoning_budget_tokens` | `16384` | 思考硬上限，到点强制收尾再作答，保证不会出现空正文 |
-| `fit_max_tokens` | `true` | `prompt + max_tokens` 超上下文时收敛输出长度，而非返回 400 |
-
-> ⚠️ **改这两个键必须重启容器**：服务器只在启动时读一次配置（`fit_max_tokens` 存进 `self.fit_max_tokens`），之后不再看配置文件。**`docker restart strata` 就够**——它会重跑 entrypoint 并重读 config（`vram_elastic`、`--pool-workers` 都是这样生效的）；只有**改 compose 文件**才需要 `./run.sh strata down` 再 `up -d`。启动日志里能看到是否真的生效：
->
-> ```
-> server 0.0.0.0:8080, gpu 0, fit_max_tokens true, reasoning_budget_tokens 16384
-> [strata] thinking budget: 16384 tokens (reasoning_budget_tokens; a request can set its own)
-> ```
-
-**Strata 默认 1 个 slot**（引擎其实支持 `"parallel": 2..8`，但本机实测负收益），并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成（总耗时是**累加**，不是取最大），且排队中的请求 6.5ms 就拿到响应头，不会触发客户端超时。日常单任务无影响；并行 subagent 会退化成串行。
