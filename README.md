@@ -113,9 +113,11 @@ sha256sum llama-xxx/models/SomeFile.gguf            # 与上面的 oid 对照
 
 ¹ Strata 是独立引擎、非 llama.cpp，结构上与上面 8 个项目不同类。首次部署要额外构建镜像和预置模型文件，完整步骤见下节。
 
+> **Strata 的两个本机注意点**：① 容器内解析不到 `huggingface.co`（DNS 被污染），所以 `strata/docker-compose.yml` 里设了 `HF_ENDPOINT=https://hf-mirror.com`；② 改配置的重启语义——只改 `strata-data/config/strata-<尺寸>.json` 用 `docker restart strata`（`up -d` 对运行中的容器是 no-op，不会重读 config），改 `strata/docker-compose.yml` 才需要 `./run.sh strata down` 再 `up -d`。
+
 ## Strata 部署
 
-`strata/` 是独立引擎 [Niko1221/Strata](https://github.com/Niko1221/Strata)（gitignored），只跑 Qwen3.8-Flash-Next，模型数据落在同级的 `strata-data/`（约 93 GB，也 gitignored）。它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29 GB 查找表），因此能在单张 16 GB 卡上跑 125 B MoE。
+`strata/` 是独立引擎 [Niko1221/Strata](https://github.com/Niko1221/Strata)（gitignored），只跑 Qwen3.8-Flash-Next，模型数据落在同级的 `strata-data/`（约 87 GB，也 gitignored）。它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29 GB 查找表），因此能在单张 16 GB 卡上跑 125 B MoE。
 
 **与 llama.cpp 项目共用 `run.sh` 和 `download-helper/`**（HF 下载路径完全通用，Strata 的分片就用它下，见 [2.1](#21-gguf-分片用-download-helper-预置)），其余（镜像构建、配置结构）不适用。
 
@@ -219,41 +221,6 @@ python3 tools/mtp_fetch.py verify --out ../strata-data/mtp   # 退出码 0 = 全
 #### 2.3 基础镜像：绕开被限速的 `docker pull`
 
 `docker pull` 单连接下 blob，遇到按连接限速的 registry 会爬到几小时。用 `scripts/pull-docker-image.py`（见 [下载诊断与脚本](#下载诊断与脚本)）走 registry HTTP API 并发拉取、装配成 docker-archive 再 `docker load`。一个坑：**存储驱动是 `overlay2`（未启用 containerd 镜像存储）时 `docker load` 只认 docker-archive**（`<config>.json` + `manifest.json` + 各 `<id>/layer.tar`，且**层必须是未压缩的 tar**），直接喂 OCI layout（`oci-layout` + `index.json` + `blobs/sha256/*`）会报 `blobs/json: no such file or directory`。
-
-### 3. 配置与运行要点
-
-- **显存按需让出（不用再停 Strata）**：常态占 15.4/16.3 GB，但 `vram_elastic` 已开启，要跑 llama.cpp 时用 `POST /v1/vram` 即可：
-  ```bash
-  # 让出 6000 MiB：实测 22 ms，释放 5.36 GiB（槽位 3786→1041）。
-  # 期间专家转 CPU 计算，仍可服务——实测 55 tok/s（正常 ~76）。
-  curl -s -X POST -H 'Content-Type: application/json' -d '{"reserve_mib": 6000}' http://127.0.0.1:8089/v1/vram
-  # 用完还回来：实测 126 ms
-  curl -s -X POST -H 'Content-Type: application/json' -d '{"reserve_mib": null}'  http://127.0.0.1:8089/v1/vram
-  ```
-  ⚠️ 长回**只到 3399/3786 槽位**（引擎遵守启动时的 700 MiB 预留 + 512 MiB 分段粒度，再调 `null` 也不会更高），速度约 94%；**要拿满缓存得 `docker restart strata`**。
-- **并发：引擎支持 `"parallel": 2..8`，但本机实测是负收益，不要开**。2 个并发请求 × 256 token：1 slot 下分别 3.8 s / 8.0 s（总 8.0 s），`parallel: 2` 下 9.5 s / 9.5 s（总 9.5 s）。slot 里的请求不能用 MTP 草稿、decode 瓶颈是共享的 CPU 专家池、且 slot 占的 1.46 GiB 只能从专家缓存里挖（3786→3026 slots，单请求 −9.4%）。
-- **`HF_ENDPOINT=https://hf-mirror.com` 必需**：容器内解析不到 `huggingface.co`（DNS 被污染），已在 `strata/docker-compose.yml` 里设好。
-- **切尺寸**：改 compose 里 `MODEL`（`Q2_0`/`IQ2_XS`/`IQ3_XXS`/`IQ3_S`/`UD-IQ4_XS`/`Coder`/`Swift`）后 **`./run.sh strata down` 再 `up -d`**——直接改 compose 后 `up -d` 不会重建容器。分片表与 vision encoder 共用，已缓存的不重复下载。
-- **配置位置**：serving / 采样参数在 `strata-data/config/strata-<尺寸>.json`，chat template kwargs 在 `strata/docker-compose.yml` 的环境变量里。
-- **改 config 后必须 `docker restart strata`**：`up -d` 对运行中的容器是 no-op，只有重启才会重读 config。（`docker restart` 会触发引擎干净退出 → 自动保存学习型 profile，见下。）
-- **首次启动**仍会跑 `setup.py` 做格式转换（生成 `strata-data/packs/`），此时 CPU / 磁盘占用高属正常。
-
-#### 3b. 调优：结论与坑
-
-已采用的设置：
-
-| 设置 | 效果 |
-|------|------|
-| `--pool-workers 14` | decode **+3.6%**——默认 19 会让 19 workers + 自旋 host 占满 20 核，饿死引擎自己的 PLE I/O / 专家拷贝 / GPU staging 线程。收益来自留 CPU 余量，不是避开 E 核。⚠️ `args` 是 setup 自有键，重跑 `--setup` 会丢 |
-| `expert_profile_save`（`/data` 卷上的绝对路径） | 首请求命中率 74.3% → 77.6%，跨重启保留学到的专家路由。是「用户键」，`--setup` 会保留 |
-| `vram_elastic` | 22 ms 放出 5.36 GiB 给别的程序。⚠️ 长回只到 3399/3786 槽位，要拿满缓存需 `docker restart strata` |
-
-三个必须知道的操作坑：
-
-- **删学习型 profile 要 `docker kill`**，不是 `docker restart`：引擎干净退出时会写回，所以「先删文件再 restart」无效（旧引擎退出时又写了一个）。顺序：`docker kill strata` → 删文件 → `docker start strata`
-- **跨配置比 tok/s 必须多 prompt 配对**：这是推理模型，任何影响专家计算的改动都会改变浮点取整 → 思考轨迹不同 → per-token 代价差几个百分点。直接比是无效的（我为此得出过两次错误结论）。可靠做法只有「多 prompt 配对」或「只比 prefill」
-- **别动的**：`--pool-affinity`（本机 no-op）、`--prefill auto:16384`（受专家缓存借用额度限制，不可能生效）、`--ple-io ram`（收益 ≲0.3%，却要占 28.8 GB 挤掉专家 arena）、`"parallel"`（见上一条）
-
 
 ## 采样参数配置
 
@@ -490,4 +457,4 @@ opencode 的阈值算法（`session/overflow.ts`）：未设 `limit.input` 时 `
 → `usable = 131072 - 45000 = 86072`，比默认早 13000 tokens。还有一层：**压缩只在 turn 收尾时检查**（拿上一轮的 `usage.tokens`），单个 turn 内新增的工具输出能一次顶过阈值——`reserved` 的 45000 就是为这种情况兜底。
 
 
-**Strata 默认 1 个 slot**（引擎其实支持 `"parallel": 2..8`，但本机实测负收益，见 [3. 配置与运行要点](#3-配置与运行要点)），并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成（总耗时是**累加**，不是取最大），且排队中的请求 6.5ms 就拿到响应头，不会触发客户端超时。日常单任务无影响；并行 subagent 会退化成串行。
+**Strata 默认 1 个 slot**（引擎其实支持 `"parallel": 2..8`，但本机实测负收益），并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成（总耗时是**累加**，不是取最大），且排队中的请求 6.5ms 就拿到响应头，不会触发客户端超时。日常单任务无影响；并行 subagent 会退化成串行。
