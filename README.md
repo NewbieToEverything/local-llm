@@ -434,27 +434,4 @@ Strata 接受任意模型名（服务端忽略该字段），故条目名可自�
 > [strata] thinking budget: 16384 tokens (reasoning_budget_tokens; a request can set its own)
 > ```
 
-#### 命名规则：model 名和 provider 名会被直接拼在一起
-
-TUI 把显示串拼成 `{agent} · {model.name}{provider.name} · {variant}`——**中间没有分隔符**。所以命名要满足两点：**每条模型名自带区分词**（没选 variant 时 `·high` 不显示，两条会撞名），**provider 名要短**（两条共用）。上面这套渲染出来 29 字符，与云端模型相当。`name` 纯属显示，调用用 `providerID/modelID`，改名不影响任何请求。
-
-> ⚠️ `strata-none` 也会弹出 `low`/`medium`/`high` 档位——在它上面选了档位就会覆盖 `options.reasoningEffort: none`，名字里的 `-None` 随即名不副实。
-
-#### 上下文溢出：`fit_max_tokens` 能救什么、救不了什么
-
-`fit_max_tokens` 只保证「不 400」，**不保证「有地方写答案」**——可用余量是 `room = 131072 - 8 - prompt_tokens`，prompt ≥ 131064 时 `room < 1` 会**直接报错**（该判断在 `fit_max_tokens` 分支之前，与它无关）。所以 opencode 侧的自动压缩必须比这条线更早触发。
-
-opencode 的阈值算法（`session/overflow.ts`）：未设 `limit.input` 时 `usable = context - min(output, 32000)` = 99072；设了则 `usable = limit.input - compaction.reserved`。两个坑：`compaction.reserved` **只在设了 `limit.input` 时才生效**；只加 `limit.input` 反而让压缩更晚（99072 → 111072），必须同时显式设 `reserved`。
-
-当前配置：
-
-```json
-// opencode.json
-"compaction": { "reserved": 45000 }
-// strata 条目的 limit（两个条目都要）
-"limit": { "context": 131072, "input": 131072, "output": 32768 }
-```
-
-→ `usable = 131072 - 45000 = 86072`，比默认早 13000 tokens。还有一层：**压缩只在 turn 收尾时检查**（拿上一轮的 `usage.tokens`），单个 turn 内新增的工具输出能一次顶过阈值——`reserved` 的 45000 就是为这种情况兜底。
-
 **Strata 默认 1 个 slot**（引擎其实支持 `"parallel": 2..8`，但本机实测负收益），并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成（总耗时是**累加**，不是取最大），且排队中的请求 6.5ms 就拿到响应头，不会触发客户端超时。日常单任务无影响；并行 subagent 会退化成串行。
