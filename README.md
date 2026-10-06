@@ -383,6 +383,6 @@ environment:
 ```
 
 - **多模态**要在 `capabilities.input` 里加 `"image"`，opencode 默认认为自定义 provider 只支持 text，**不声明即无法开启**（[Issue #9897](https://github.com/anomalyco/opencode/issues/9897)）
-- **`limit` 要按模型的真实上限填**：`context` 给模型上限；`output` 给 **thinking 模型**留足（本机用 `32768`——给 `8192` 时难题的思考会吃光预算、返回**空正文**）；想让 `compaction.reserved` 生效还必须同时显式设 `limit.input`
+- **`limit` 要按模型的真实上限填**：`context` 给模型上限；`output` 给 **thinking 模型**留足（本机 **Strata** 用 `32768`——给 `8192` 时难题的思考会吃光预算、返回**空正文**）；想让 `compaction.reserved` 生效还必须同时显式设 `limit.input`
 - 字段名有两套等价写法（v2.0.22 实测都能用）：本文件在用的 `package`/`settings`/`capabilities` ↔ 官方 schema 的 `npm`/`options`/`modalities`
-- **不要写 `variants` 字段**（会让该模型被整体丢弃、从列表消失），但 opencode 会自动为 openai-compatible 模型生成 `low`/`medium`/`high` 档位（映射为 `reasoningEffort`，正是 Strata 需要的请求参数）。⚠️ **选过的档位会持久化**：在 TUI 的 variant 窗口选一次，会写进 `~/.local/state/opencode/model.json`，**此后该模型一直套用它、跨会话有效**，条目里的 `options.reasoningEffort` 不再生效。排查「条目写 high 却没在想」先看这里；恢复时在窗口选 **Default**。注意 `opencode run --model provider/model#variant` 也会写入，**用它测试会污染后续所有请求**（且删键会被会话切换写回来）。
+- **不要写 `variants` 字段**（会让该模型被整体丢弃、从列表消失），但 opencode 会自动为 openai-compatible 模型生成 `low`/`medium`/`high` 档位（映射为 `reasoningEffort`，正是 Strata 需要的请求参数）。⚠️ **选过的档位会持久化**：在 TUI 的 variant 窗口选一次，会写进 `~/.local/state/opencode/model.json`，**此后该模型一直套用它、跨会话有效**，条目里的 `options.reasoningEffort` 不再生效。
