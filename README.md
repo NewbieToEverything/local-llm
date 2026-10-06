@@ -226,6 +226,8 @@ python3 tools/mtp_fetch.py verify --out ../strata-data/mtp   # 退出码 0 = 全
 
 各模型的 `command:` 字段通过 CLI 参数设置采样参数，缓解模型生产重复内容（过量重采样）的问题。opencode 等客户端未显式传参时，均使用这些默认值。
 
+> **Strata 不适用本节**：它的配置（`strata-<尺寸>.json`）里只有引擎 / serving 参数，**没有任何采样参数**，也没有服务端采样默认值——缺省 `temperature` 时引擎按 **greedy** 解码。要非贪心采样，必须由请求携带参数（见 [覆盖默认值](#覆盖默认值)）。
+
 > `LLAMA_ARG_*` 环境变量中仅 `LLAMA_ARG_TOP_K` 被注册，其他采样参数（`--temp`、`--top-p`、`--repeat-penalty`、`--presence-penalty`、`--frequency-penalty`）不支持 env var，必须通过 CLI 参数传入。
 
 ### 各模型配置
@@ -250,7 +252,7 @@ python3 tools/mtp_fetch.py verify --out ../strata-data/mtp   # 退出码 0 = 全
 
 ### 覆盖默认值
 
-客户端可以通过 API 请求体覆盖任一参数：
+客户端可以通过 API 请求体覆盖任一采样参数（8 个 llama.cpp 模型和 Strata 都支持；端口换成目标模型即可）：
 
 ```bash
 curl -X POST http://localhost:8085/v1/chat/completions \
@@ -263,11 +265,16 @@ curl -X POST http://localhost:8085/v1/chat/completions \
   }'
 ```
 
+两个例外要注意：
+
+- **GPT-OSS**：`top_k=0` / `top_p=1.0` 是官方硬要求（保证 Harmony format 的输出分布正确），覆盖它们会让质量下降。
+- **Strata**：它没有服务端采样默认值——**不传就是 greedy**（`temperature` 缺省与 `temperature=0` 等价，都不会转发给引擎）；要用别的采样必须在请求里显式带上。
+
 ## API 调用
 
 ### 多模态（图像）
 
-启用多模态需在 `docker-compose.yml` 中配置 mmproj：
+**llama.cpp 系列**（Qwen 3.5/3.6、Gemma 4 系列、AgentWorld；GPT-OSS 不支持图像）需在 `docker-compose.yml` 中配置 mmproj：
 
 ```yaml
 - LLAMA_ARG_MMPROJ=/models/mmproj-F16.gguf
@@ -289,9 +296,13 @@ curl -X POST http://localhost:8086/v1/chat/completions \
   }'
 ```
 
+> **Strata** 的图像能力是引擎内置的：`strata-<尺寸>.json` 的 `vision` 段 + 共享的 `mmproj-Qwen3.8-Flash-Next-BF16.gguf`，客户端只要在条目里声明 `capabilities.input: ["image"]`（见 [Strata 专用条目](#strata-专用条目)）。
+
 ### thinking 模式
 
-Gemma 4 / Qwen 3.x 默认开启 thinking，会在回答前输出 `reasoning_content`。如需关闭，需使用如下命令：
+**llama.cpp 系列**（Strata 的思考控制走客户端 `reasoningEffort`，见 [thinking / reasoning 的控制位置](#thinking--reasoning-的控制位置)）。
+
+Gemma 4 / Qwen 3.x 的 thinking 取决于各 compose 的 `LLAMA_ARG_CHAT_TEMPLATE_KWARGS`——**不是模型默认值，本仓库里也不统一**（如 qwen36 设为 `false`）。开启时回答前会输出 `reasoning_content`；临时关闭可在请求里带 `chat_template_kwargs`，永久改则改 env 并重启容器：
 ```bash
 curl -X POST http://localhost:8086/v1/chat/completions \
   -H "Content-Type: application/json" \
