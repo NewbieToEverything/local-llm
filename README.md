@@ -132,14 +132,14 @@ git clone https://github.com/Niko1221/Strata.git strata
 
 cd strata
 # 上游 Dockerfile 在 build 时要下 llama.cpp 源码（GitHub）+ apt/pip，全走构建期网络。
-# 必须同时给 --network host 和四个代理变量：只给 --network host 仍会直连，
-# 实测直连到 GitHub 只有 ~30 KB/s，37.7 MB 的包卡 40 分钟都过不去。
+# 必须同时给 --network host 和四个代理变量（把 PORT 换成你的代理端口）：只给
+# --network host 仍会直连，实测直连到 GitHub 只有 ~30 KB/s，37.7 MB 的包卡 40 分钟都过不去。
 docker build --network host \
   --build-arg CUDA_ARCHITECTURES=120 \
-  --build-arg HTTP_PROXY=http://127.0.0.1:10808 \
-  --build-arg HTTPS_PROXY=http://127.0.0.1:10808 \
-  --build-arg http_proxy=http://127.0.0.1:10808 \
-  --build-arg https_proxy=http://127.0.0.1:10808 \
+  --build-arg HTTP_PROXY=http://127.0.0.1:PORT \
+  --build-arg HTTPS_PROXY=http://127.0.0.1:PORT \
+  --build-arg http_proxy=http://127.0.0.1:PORT \
+  --build-arg https_proxy=http://127.0.0.1:PORT \
   -t strata:upstream .
 
 # 派生层：把 /opt/strata 交给宿主用户，使 bind mount 产生的文件不属 root
