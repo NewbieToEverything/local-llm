@@ -375,7 +375,6 @@ environment:
 - 字段名有两套等价写法（v2.0.22 实测都能用）：本文件在用的 `package`/`settings`/`capabilities` ↔ 官方 schema 的 `npm`/`options`/`modalities`
 - **不要写 `variants` 字段**（会让该模型被整体丢弃、从列表消失），但 opencode 会自动为 openai-compatible 模型生成 `low`/`medium`/`high` 档位（映射为 `reasoningEffort`，正是 Strata 需要的请求参数）
 
-
 ### ⚠️ variant 选择会持久化，并覆盖条目的 options
 
 这是最容易踩的坑：在 TUI 的 variant 窗口选一次，会写进 `~/.local/state/opencode/model.json`，**此后该模型一直套用它、跨会话有效**，条目里的 `options.reasoningEffort` 不再生效。排查「条目写 high 却没在想」先看这里；恢复时在窗口选 **Default**。注意 `opencode run --model provider/model#variant` 也会写入，**用它测试会污染后续所有请求**（且删键会被会话切换写回来）。
@@ -438,7 +437,6 @@ TUI 把显示串拼成 `{agent} · {model.name}{provider.name} · {variant}`—�
 
 > ⚠️ `strata-none` 也会弹出 `low`/`medium`/`high` 档位——在它上面选了档位就会覆盖 `options.reasoningEffort: none`，名字里的 `-None` 随即名不副实。
 
-
 #### 上下文溢出：`fit_max_tokens` 能救什么、救不了什么
 
 `fit_max_tokens` 只保证「不 400」，**不保证「有地方写答案」**——可用余量是 `room = 131072 - 8 - prompt_tokens`，prompt ≥ 131064 时 `room < 1` 会**直接报错**（该判断在 `fit_max_tokens` 分支之前，与它无关）。所以 opencode 侧的自动压缩必须比这条线更早触发。
@@ -455,6 +453,5 @@ opencode 的阈值算法（`session/overflow.ts`）：未设 `limit.input` 时 `
 ```
 
 → `usable = 131072 - 45000 = 86072`，比默认早 13000 tokens。还有一层：**压缩只在 turn 收尾时检查**（拿上一轮的 `usage.tokens`），单个 turn 内新增的工具输出能一次顶过阈值——`reserved` 的 45000 就是为这种情况兜底。
-
 
 **Strata 默认 1 个 slot**（引擎其实支持 `"parallel": 2..8`，但本机实测负收益），并发请求会排队而非报错——实测 3 个并发耗时 4.0/6.7/9.2 秒依次完成（总耗时是**累加**，不是取最大），且排队中的请求 6.5ms 就拿到响应头，不会触发客户端超时。日常单任务无影响；并行 subagent 会退化成串行。
