@@ -111,79 +111,63 @@ sha256sum llama-xxx/models/SomeFile.gguf            # 与上面的 oid 对照
 | gemma4-26b-qat | 8088 | 256K | `./run.sh gemma4-26b-qat up -d` |
 | strata | 8089 | 128K | 见 [Strata 部署](#strata-部署) ¹ |
 
-¹ Strata 是独立引擎、非 llama.cpp，结构上与上面 8 个项目不同类。首次部署要额外构建镜像和预置模型文件，完整步骤见下节。
+¹ Strata 是独立引擎、非 llama.cpp，结构上与上面 8 个项目不同类。0.2.1 起官方直接发布 Docker 镜像，**不用再本地编译引擎**；首次部署要预置模型文件，完整步骤见下节。
 
-> **Strata 的两个本机注意点**：① 容器内解析不到 `huggingface.co`（DNS 被污染），所以 `strata/docker-compose.yml` 里设了 `HF_ENDPOINT=https://hf-mirror.com`；② 改配置的重启语义——只改 `strata-data/config/strata-<尺寸>.json` 用 `docker restart strata`（`up -d` 对运行中的容器是 no-op，不会重读 config），改 `strata/docker-compose.yml` 才需要 `./run.sh strata down` 再 `up -d`。
+> **Strata 的三个本机注意点**：① 容器内解析不到 `huggingface.co`（DNS 被污染），所以 `strata/docker-compose.yml` 里设了 `HF_ENDPOINT=https://hf-mirror.com`；② 0.2.x 起服务端**强制 API key**（没设就在首次启动时自动生成，存 `strata-data/state/api-key`），所有客户端都要带 `Authorization: Bearer <key>`；③ 改配置的重启语义——运行配置在 `strata-data/install/strata-<尺寸>.json`（0.1.x 在 `config/`），改完 `docker restart strata` 即可（`up -d` 对运行中的容器是 no-op，不重读 config），改 `strata/docker-compose.yml` 才需要 `./run.sh strata down` 再 `up -d`。
 
 ## Strata 部署
 
 `strata/` 是独立引擎 [Niko1221/Strata](https://github.com/Niko1221/Strata)（gitignored），只跑 Qwen3.8-Flash-Next，模型数据落在同级的 `strata-data/`（约 87 GB，也 gitignored）。它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29 GB 查找表），因此能在单张 16 GB 卡上跑 125 B MoE。
 
-**与 llama.cpp 项目共用 `run.sh` 和 `download-helper/`**（HF 下载路径完全通用，Strata 的分片就用它下，见 [2.1](#21-gguf-分片用-download-helper-预置)），其余（镜像构建、配置结构）不适用。
+**0.2.1 起官方直接发布 Docker 镜像**，不用再 clone 源码编译 CUDA 引擎（以前那套 20~40 分钟的构建流程已作废）。镜像里固定了引擎与 Terminal 的版本，容器入口走 `strata launch`：准备模型 → 加载 → 起服务。
 
-### 1. clone 引擎并构建镜像
+**与 llama.cpp 项目共用 `run.sh` 和 `download-helper/`**（HF 下载路径完全通用，Strata 的分片就用它下，见 [2.1](#21-gguf-分片用-download-helper-预置)）。
 
-上游 Dockerfile 在 build 时编译 CUDA 引擎，**20~40 分钟**，且 `CUDA_ARCHITECTURES` 要按显卡代次填：
+### 1. 拉官方镜像
 
-| 显卡 | RTX 50 系 | 40 系 | 30 系 | A 系 |
-|------|----------|------|------|------|
-| `CUDA_ARCHITECTURES` | `120` | `89` | `86` | `80` |
-
-```bash
-git clone https://github.com/Niko1221/Strata.git strata
-
-cd strata
-# 上游 Dockerfile 在 build 时要下 llama.cpp 源码（GitHub）+ apt/pip，全走构建期网络。
-# 必须同时给 --network host 和四个代理变量（把 PORT 换成你的代理端口）：只给
-# --network host 仍会直连，实测直连到 GitHub 只有 ~30 KB/s，37.7 MB 的包卡 40 分钟都过不去。
-docker build --network host \
-  --build-arg CUDA_ARCHITECTURES=120 \
-  --build-arg HTTP_PROXY=http://127.0.0.1:PORT \
-  --build-arg HTTPS_PROXY=http://127.0.0.1:PORT \
-  --build-arg http_proxy=http://127.0.0.1:PORT \
-  --build-arg https_proxy=http://127.0.0.1:PORT \
-  -t strata:upstream .
-
-# 派生层：把 /opt/strata 交给宿主用户，使 bind mount 产生的文件不属 root
-docker build -t strata:latest -f Dockerfile.local \
-  --build-arg HOST_UID=$(id -u) --build-arg HOST_GID=$(id -g) .
-```
-
-### 1b. 更新引擎到新版本
+| 显卡 | 镜像标签 | 宿主要求 |
+|---|---|---|
+| NVIDIA RTX 20/30/40/50 系 | `0.2.2-cuda13` | 驱动 **≥ 580** + NVIDIA Container Toolkit |
+| NVIDIA GTX 10 (Pascal) / Tesla P100 / V100 | `0.2.2-cuda12` | 驱动 **≥ 575**（0.2.2 起 CUDA 12 包又带 Pascal/Volta 代码） |
+| AMD RX 9000 / Radeon AI PRO R9700 | `0.2.1-rocm-gfx120x` | 0.2.2 镜像尚未发布（引擎包有 `hip-rx9070`），先用 0.2.1 |
+| AMD RX 7000 / RX 6000 | `0.2.2-rocm-gfx110x` | `amdgpu` 内核驱动（0.2.2 起顺带 RX 6000 引擎包） |
+| AMD Ryzen AI Max (Strix Halo) | `0.2.2-rocm-gfx1151` | `amdgpu` 内核驱动 |
+| Intel Arc | 无官方镜像 | 官方没发过 sycl tag；Gyro 可在 Arc 跑，引擎要自己源码编 |
 
 ```bash
-cd strata
-git pull
+docker pull ghcr.io/niko1221/strata:0.2.2-cuda13   # 本机实测一次拉完（1.4 GB）
+# 拉不动时用 scripts/pull-docker-image.py 走 registry API 并发拉（见 2.3 节的说明）
 ```
 
-然后**重新执行上面第 1 步那条 `strata:upstream` 的构建命令**（代理参数一个都不能省）。要点：
+拉完先留个回滚标签：
 
-- **层缓存救不了更新**：`COPY . .` 排在下载/编译之前，源码一变它之后的所有层全部失效（Docker 层缓存只在「源码 + 构建命令完全没变」时命中，那时整条构建 0 秒完成）。llama.cpp 那个包在 `setup.py` 里本来有缓存，但上游 `.dockerignore` 刻意排除了 `third_party/`，宿主机上的副本进不了构建上下文。
-- **有代理时整条约 4 分钟**：下载 17 秒 + sm_120 单架构编译约 3.5 分钟（20 核并行）。没有代理则无限重试。
-- **先留回滚标签**，再重建：
-  ```bash
-  docker tag strata:upstream strata:upstream-<旧版本>
-  docker tag strata:latest   strata:latest-<旧版本>
-  ```
-- 新版可能要新参数：`git pull` 后确认 `setup.py` 的 `MIN_ENGINE` 是否已等于新版本，并注意 config 里 `args` 是 setup 自有键，**重跑 `--setup` 会丢掉手加的引擎参数**（如 `--pool-workers`）。
+```bash
+docker tag ghcr.io/niko1221/strata:0.2.2-cuda13 strata:v0.2.2
+```
 
-`Dockerfile.local` 这层是必需的：上游镜像以 root 运行，`/opt/strata` 又是 bind mount 的宿主目录，不 chown 的话 `strata-data/` 里的文件会全属 root、后续层就没法增量写。
+### 2. 预置模型文件
 
-之后用常规方式启动：`./run.sh strata up -d`。
+0.2.x 的数据卷布局（`strata/docker-compose.yml` 里挂 `../strata-data:/data`）：
 
-### 2. 下载模型文件
+| 宿主路径 | 内容 |
+|---|---|
+| `strata-data/Strata-data/models/<尺寸>/` | GGUF 分片 + `mmproj-*.gguf`（看图要用） |
+| `strata-data/Strata-data/packs/<尺寸>/` | 准备好的 pack（省掉一次本机转换） |
+| `strata-data/Strata-data/mtp/` | MTP 张量与 draft layer |
+| `strata-data/install/` | 运行配置 `strata-<尺寸>.json`、日志 |
+| `strata-data/state/` | 预设、调优结果、**API key** |
+| `strata-data/config/` | 终端自身设置 |
 
-⚠️ **不要让 `setup.py` 自己下载模型。** 它是单连接，实测会被 hf-mirror 限速到 0.6 MB/s，85 GB 的 ETA 是 34 小时——实际不可用。三个部分分别处理：
+⚠️ **0.2.x 不读 0.1.x 的旧布局**（`strata-data/models` / `packs` / `mtp` / `config`）：要么把目录挪进 `Strata-data/`，要么用 `MODEL_PATH` 指到旧位置。
 
 #### 2.1 GGUF 分片：用 `download-helper` 预置
 
-`setup.py` 的 `download()` 接受预置文件，命中就跳过、不会重下（有 `.done` 标记直接返回；文件存在且 size 等于 HEAD 的 `Content-Length` 就补标记再返回）。所以直接用上面的 `download-helper` 流程预置，保持**原文件名和子目录结构**：
+`strata launch` 认 `MODEL_PATH`（容器内已有的 GGUF 目录），指过去就**不再下载模型本身**。预置时保持原文件名和子目录结构：
 
 ```bash
-# 当前 MODEL=IQ3_S 时是这两个分片；换尺寸改 --include 里的目录名
 docker run --rm --name download-strata-shards \
   --network host \
-  -v xxx/local-llm/strata-data/models:/models \
+  -v xxx/local-llm/strata-data/Strata-data/models:/models \
   -u "$(id -u):$(id -g)" \
   -e HF_ENDPOINT=https://hf-mirror.com \
   download-helper:latest \
@@ -191,42 +175,114 @@ docker run --rm --name download-strata-shards \
            --include 'IQ3_S/*' --local-dir /models -x 10"
 ```
 
-落盘路径须是 `strata-data/models/IQ3_S/<原名>`（`hfd.sh` 保留仓库内的子目录，`--local-dir` 指到 `models/` 即可）。
+- 落盘路径须是 `strata-data/Strata-data/models/IQ3_S/<原名>`。
+- **看图用的 `mmproj-Qwen3.8-Flash-Next-BF16.gguf` 必须和分片放同一目录**：0.2.x 找不到就直接报「put mmproj-… in <folder>」，不会替你下载。
+- hf-mirror 对 pinned revision（`ed59f920…`）返回 308 未缓存，所以走 `main`——当前 `main` HEAD 恰好等于该 commit，但**将来会漂移**。分片只按 size 校验、不查 sha256，想严格校验就按[下载模型文件](#下载模型文件)那节取 `lfs.oid` 比对。
 
-hf-mirror 对 setup.py 用的 pinned revision（`setup.py` 的 `HF_REVISIONS` 里那个 commit `ed59f920…`）返回 308 未缓存，所以走 `main`——当前 `main` HEAD 恰好等于该 commit，但**将来会漂移**。这些分片 setup.py 只按 size 校验、不查 sha256，想严格校验就按[下载模型文件](#下载模型文件)那节取 `lfs.oid` 比对。
+#### 2.2 pack 与 MTP
 
-#### 2.2 MTP 张量：拆 `mtp_fetch.py` 的过滤并行
-
-MTP 张量（落在 `strata-data/mtp/`）由引擎自带的 `tools/mtp_fetch.py` 拉，本身是**串行**的，5.21 GB 排成一队约 2.8 小时。它有 `inventory` / `fetch` / `verify` 三个子命令，`fetch` 支持 `--only <子串>` 过滤，且各实例写各自的 `.bin` 文件、互不冲突——利用这点并行：
+- **pack**（`packs/<尺寸>/`，含 `native_experts.txt` + `tokenizer/`）：没有它，首次启动会在本机做一次转换（读 79 GB，写约 1.5 GB）。从 0.1.x 升级时，把旧的 `packs/iq3_s` 直接搬进 `Strata-data/packs/` 就能复用，不重转。
+- **MTP draft layer**（`mtp/rt/`）：0.2.x 会自动拉约 5 GB 的 MTP 张量并生成 `mtp/rt/`。想并行加速下载，用引擎自带的 `tools/mtp_fetch.py`（`inventory` / `fetch` / `verify` 三个子命令，`fetch` 支持 `--only <子串>` 过滤；多路并行时过滤串不能重叠，否则互相覆盖）：
 
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com
 cd strata
-# 96% 的体积集中在下面三个张量上，拆 3 路约 1 小时
-python3 tools/mtp_fetch.py fetch --out ../strata-data/mtp \
+python3 tools/mtp_fetch.py fetch --out ../strata-data/Strata-data/mtp \
   --only mtp.layers.0.mlp.experts.gate_up_proj &
-python3 tools/mtp_fetch.py fetch --out ../strata-data/mtp \
+python3 tools/mtp_fetch.py fetch --out ../strata-data/Strata-data/mtp \
   --only mtp.layers.0.mlp.experts.down_proj &
-python3 tools/mtp_fetch.py fetch --out ../strata-data/mtp \
+python3 tools/mtp_fetch.py fetch --out ../strata-data/Strata-data/mtp \
   --only mtp.layers.0.self_attn &
 wait
-
-# 关键收尾：补齐剩下的小张量并写出完整 manifest
-python3 tools/mtp_fetch.py fetch  --out ../strata-data/mtp
-python3 tools/mtp_fetch.py verify --out ../strata-data/mtp   # 退出码 0 = 全部张量正确
+python3 tools/mtp_fetch.py fetch  --out ../strata-data/Strata-data/mtp   # 补齐小张量 + manifest，这步不能省
+python3 tools/mtp_fetch.py verify --out ../strata-data/Strata-data/mtp   # 退出码 0 = 全部张量正确
 ```
 
-并行安全的前提是 **`--only` 的过滤互不重叠**，否则会互相覆盖；每个张量下完都会按脚本内置的 pinned revision sha256 校验。**那步不带 `--only` 的完整 `fetch` 不能省**——小张量和 `mtp-manifest.json` 是它写的。
-
-#### 2.3 基础镜像：绕开被限速的 `docker pull`
+#### 2.3 镜像拉不动时
 
 `docker pull` 单连接下 blob，遇到按连接限速的 registry 会爬到几小时。用 `scripts/pull-docker-image.py`（见 [下载诊断与脚本](#下载诊断与脚本)）走 registry HTTP API 并发拉取、装配成 docker-archive 再 `docker load`。一个坑：**存储驱动是 `overlay2`（未启用 containerd 镜像存储）时 `docker load` 只认 docker-archive**（`<config>.json` + `manifest.json` + 各 `<id>/layer.tar`，且**层必须是未压缩的 tar**），直接喂 OCI layout（`oci-layout` + `index.json` + `blobs/sha256/*`）会报 `blobs/json: no such file or directory`。
+
+### 3. 启动与客户端接入
+
+```bash
+./run.sh strata up -d
+docker logs -f strata            # 首次启动：准备模型 → 加载（本机约 40 s）
+```
+
+**API key**：0.2.x 起服务端**强制**要 key（容器内监听所有地址，不带 key 不给服务）。compose 里没设 `API_KEY` 时，首次启动自动生成并存到 `strata-data/state/api-key`：
+
+```bash
+docker exec strata strata launch --show-key --preset docker
+```
+
+客户端要带 `Authorization: Bearer <key>`。三处常用配置的最小改动：
+
+| 客户端 | 文件 | 改什么 |
+|---|---|---|
+| opencode | `~/.config/opencode/opencode.json` | `providers.strata.settings.apiKey` 填 key（`baseURL` 保持 `http://localhost:8089/v1`） |
+| codex | `~/.codex/<profile>.config.toml` | `[model_providers.<id>]` 里加 `experimental_bearer_token = "<key>"`（或 `env_key = "STRATA_API_KEY"` 走环境变量） |
+| Hermes | `~/.hermes/config.yaml` | `providers.strata.api_key` 填 key |
+
+官方有 `strata connect <app>`（opencode / codex / claude-code / hermes / pi / oh-my-pi / openclaw）能生成这些配置：**默认只打印不写文件**，`--write` 才写（写前询问 + 留备份）。但它的 opencode 输出是 **V1 风格**（`provider` 而非 `providers`），还会顺手改掉默认模型、`compaction`、`share`；codex / hermes 的输出是**整文件替换**。所以本仓库的做法是：**只把它当参考，key 手工填进自己的配置**。
+
+### 4. 配置改哪儿
+
+- **运行配置**：`strata-data/install/strata-<尺寸>.json`（0.1.x 时代在 `strata-data/config/`，升级后位置变了）。
+- `args` 是 setup 自有键，**重跑 setup 会被覆盖**；`user_args` 才是你手改的引擎参数（每次启动都盖在 `args` 上）。`expert_profile_save` / `vram_elastic` / `vision.elastic` / `reasoning_budget_tokens` 这些顶层键通常会被后续 setup 保留，**但换引擎大版本的镜像有一条例外，见下一节**。
+- 改完 `docker restart strata` 即可生效；改 `docker-compose.yml` 里的环境变量（MODEL / CONTEXT / VISION / KV / STRATA_SET 等）要 `./run.sh strata down` 再 `up -d`。
+- 0.1.x 的 `LOW_RAM` / `RESIDENT_BUDGET_GIB` / `KV_STREAMING` / `LAYER_SPLIT` / `CONFIG` / `REINSTALL` 在 0.2.x **已废弃**，只打警告并忽略；`HOST` 也不再需要（容器内本来就监听所有地址，能被谁访问由端口映射决定）。
+
+### 5. 更新与回滚
+
+```bash
+docker compose pull && ./run.sh strata down && ./run.sh strata up -d
+```
+
+模型文件、pack、预设、调优结果都在卷里，换镜像不会重下。回滚：把 compose 的 `image:` 改回旧标签（更新前 `docker tag` 留好），`down` 之后再 `up -d`。
+
+⚠️ **0.2.2 实测的坑：换引擎大版本会重生成运行配置。** 容器启动时若发现旧配置里的组件路径在新镜像里不存在（引擎目录名随版本变，如 `0.1.46-…/strata-vision` → `0.1.47-…`；开着 vision 时必触发），入口会打出一行 «making them again» 然后**整个重写** `install/strata-<尺寸>.json`——`user_args`、`expert_profile_save`、`vram_elastic`、`vision.elastic`、`reasoning_budget_tokens` 全部丢，引擎参数回落到自动算的默认值（本机实测 pool 13、槽位 3771、expert-profile 指回镜像内路径）。API key、模型文件、pack、MTP、学习版专家画像（`config/expert-profile-learned.bin`）不受影响。
+
+升级后必须重放用户键再 `docker restart strata`，重放完成核对 `slots` / `pool_workers`：
+
+```bash
+python3 - <<'EOF'
+import json
+p = 'strata-data/install/strata-iq3_s.json'
+c = json.load(open(p))
+c['user_args'] = ['--pool-workers', '14']
+c['expert_profile_save'] = '/data/config/expert-profile-learned.bin'
+c['vram_elastic'] = True
+c['reasoning_budget_tokens'] = 16384
+c.setdefault('vision', {})['elastic'] = True
+json.dump(c, open(p, 'w'), indent=1)
+EOF
+docker restart strata
+# 验证（期望 4454 / 14）：curl -s localhost:8089/metrics -H "Authorization: Bearer $(cat strata-data/state/api-key)" | see engine.expert_slots / pool_workers
+```
+
+### 6. 性能测量
+
+`strata-bench/` 是标准化的测试工具（固定协议 + 结果留档 + 配对比较），换版本或改配置后用它测，别直接拿两次数字相减：
+
+```bash
+python3 strata-bench/strata_bench.py bench --label "0.2.1"
+python3 strata-bench/strata_bench.py compare results/旧.json results/新.json
+```
+
+本机实测（RTX 5070 Ti，IQ3_S，128K）：
+
+| 版本变化 | decode | prefill | 结论 |
+|---|---|---|---|
+| 0.1.45 → 0.2.1（engine 0.1.45→0.1.46） | 配对均值 **+3.12 tok/s（+2.9%）**，13/15 正，p=0.0082；中位 108.3 → 110.8 | 2944.8 → 2894.7（−1.7%） | 官方镜像/数据布局迁移的收益 |
+| 0.2.1 → 0.2.2（engine 0.1.46→0.1.47） | 配对均值 **−0.90 tok/s，p=0.59（不显著）**；中位 110.8 → 112.3 | 2894.7 → 2931.8（+1.3%） | 引擎对 Qwen 的路径没改（源码仅一处 VDEBUG 编译修复），速度等价，符合预期 |
+
+详见 [`strata-bench/README.md`](strata-bench/README.md) 与 `docs/strata-tuning.md`（本机笔记，不进版本库）。
 
 ## 采样参数配置
 
 各模型的 `command:` 字段通过 CLI 参数设置采样参数，缓解模型生产重复内容（过量重采样）的问题。opencode 等客户端未显式传参时，均使用这些默认值。
 
-> **Strata 不适用本节**：它的配置（`strata-<尺寸>.json`）里只有引擎 / serving 参数，**没有任何采样参数**，也没有服务端采样默认值——缺省 `temperature` 时引擎按 **greedy** 解码。要非贪心采样，必须由请求携带参数（见 [覆盖默认值](#覆盖默认值)）。
+> **Strata 的采样参数不走 `command:`，而是走运行配置里的 `sampling` 块**（`strata-data/install/strata-<尺寸>.json`）。0.2.x 支持 `temperature` / `top_p` / `top_k` / `min_p` / `presence_penalty` / `repetition_penalty` / `frequency_penalty` / `penalty_last_n` / `seed`，作为**请求没带这些字段时的默认值**；请求自己带的永远优先，显式 `temperature=0` 仍是 greedy，不带 `temperature` 也是 greedy。写错的值会让服务直接拒绝启动（不会静默改采样）。
 
 > `LLAMA_ARG_*` 环境变量中仅 `LLAMA_ARG_TOP_K` 被注册，其他采样参数（`--temp`、`--top-p`、`--repeat-penalty`、`--presence-penalty`、`--frequency-penalty`）不支持 env var，必须通过 CLI 参数传入。
 
