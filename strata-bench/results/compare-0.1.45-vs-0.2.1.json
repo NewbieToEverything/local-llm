@@ -1,0 +1,12 @@
+{
+ "label": "compare:0.1.45(engine 0.1.45) vs 0.2.1(engine 0.1.46)",
+ "time": "2026-10-21T11:13:34",
+ "test": "compare",
+ "pairs": 15,
+ "mean_diff_B_minus_A": 3.1200000000000028,
+ "p": 0.00823974609375,
+ "median_a": 108.3,
+ "median_b": 110.8,
+ "prefill_a": 2944.8,
+ "prefill_b": 2894.7
+}
