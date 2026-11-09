@@ -19,7 +19,7 @@
 | 发布日期 | 2025-08-05 | 2025-08-05 | 2026-02-24 | 2026-04-16 | 2026-04-02 | 2026-06-09 | 2026-06-03 | 2026-06-24 | 2026-09 |
 | 参数量 | 21B (3.6B活跃) | 117B (5.1B活跃) | 35B (3B活跃) | 35B (3B活跃) | 26B (3.8B活跃) | 26B (3.8B活跃) | 12B (dense) | 35B (3B活跃) | 125B (6B活跃) + 51B n-gram + 4B MTP |
 | 模型架构 | MoE Transformer | MoE Transformer | Hybrid Gated DeltaNet + MoE | Hybrid Gated DeltaNet + MoE | MoE Transformer | MoE Transformer | Dense Unified | Hybrid Gated DeltaNet + MoE | Hybrid Gated DeltaNet + QSA + N-gram + MoE |
-| 上下文长度 | 128K | 128K | 256K | 256K | 256K | 256K | 256K | 256K | 128K (原生 262K) |
+| 上下文长度 | 128K | 128K | 256K | 256K | 256K | 256K | 256K | 256K | 256K |
 | 内存占用 | ~12GB | ~63GB | 22GB | 22GB | 17GB | ~15GB | ~13GB (Q4_K_M) / ~14GB (Q6_K) | ~21GB | 66GB RAM / 15.4GB 显存 |
 | 许可证 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | **qwen-community-1.0**（非 Apache，商用需自行确认） |
 | 多模态支持 | - | - | 图像 | 图像 | 图像 | 图像 | 图像+音频 | 图像 | 图像 |
@@ -27,7 +27,7 @@
 | AIME (竞赛数学) | 96%/98.7% | - | 91.0%/91.0% | 92.7%/92.7% | 88.3% | ~ | ~88% | - (world model) | - ² |
 | MMLU (知识测试) | 85.3% | - | 85.3% | 86.1% | 85.2% | ~ | ~85.5% | - (world model) | - ² |
 
-¹ Strata 不是 llama.cpp：它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29GB 查找表），因此能在单张 16GB 卡上跑 125B MoE。**常态占 95.2% 显存，但可用 `POST /v1/vram` 按需让出（`vram_elastic`，实测 22 ms 放出 5.36 GiB），无须再停容器；并发方面引擎虽支持 `"parallel": 2..8`，但本机实测是负收益（见 §3），保持单 slot 更快。** 部署步骤见 [Strata 部署](#strata-部署)。
+¹ Strata 不是 llama.cpp：它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29GB 查找表），因此能在单张 16GB 卡上跑 125B MoE。**常态占 95.2% 显存，但可用 `POST /v1/vram` 按需让出（`vram_elastic`，实测 22 ms 放出 5.36 GiB），无须再停容器；并发方面引擎虽支持 `"parallel": 2..8`，但本机实测是负收益（见 §3），保持单 slot 更快。** 部署步骤见 [Strata 部署](#strata-部署)。本列的速度/延迟数字测于 engine 0.1.45（2026-10-05）；之后版本的配对实测见 [§6](#6-性能测量)。
 
 ² 官方 model card 未报告 SWE-bench Verified / AIME / MMLU，无法与本表其它列同口径并列。其自报的另一套基准分数为：SWE-bench Pro 62.5、SWE-bench Multilingual 81.0、LiveCodeBench v6 91.9、GPQA Diamond 91.7、HLE 35.9、DeepSWE 1.1 58.7、NL2Repo-Bench 48.1、CoWorkBench 73.9、AndroidWorld 84.5、LVBench 76.6、ERQA 72.3、RealWorldQA 88.5（出处：[Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next)，评测条件见其 card 脚注）。
 
@@ -93,7 +93,7 @@ sha256sum llama-xxx/models/SomeFile.gguf            # 与上面的 oid 对照
 | 诊断 | `scripts/net-probe.sh` | 判断瓶颈是「按连接限速」还是「总带宽上限」——长连接速率 << 短请求速率就是前者，加并发有效 |
 | 诊断 | `references/download-speed-diagnosis.md` | 限速类型的完整判读与实测数据 |
 | 非 HF 下载 | `scripts/parallel-fetch.py` | 并行分块下载大文件：切块 + 每块一条独立 range 请求，规避按连接限速；manifest 驱动，逐文件校验 sha256，支持断点续传 |
-| 非 HF 下载 | `scripts/pull-docker-image.py` | 拉 Docker 镜像并 `docker load` 导入，绕开被限速的 `docker pull`（见 [2.3](#23-基础镜像绕开被限速的-docker-pull)） |
+| 非 HF 下载 | `scripts/pull-docker-image.py` | 拉 Docker 镜像并 `docker load` 导入，绕开被限速的 `docker pull`（见 [2.3](#23-镜像拉不动时)） |
 
 > 这些脚本**不在本仓库内**，换机器需自行获取。
 
@@ -109,15 +109,15 @@ sha256sum llama-xxx/models/SomeFile.gguf            # 与上面的 oid 对照
 | gemma4-12b | 8086 | 256K | `./run.sh gemma4-12b up -d` |
 | gemma4-26BA4B | 8087 | 256K | `./run.sh gemma4-26BA4B up -d` |
 | gemma4-26b-qat | 8088 | 256K | `./run.sh gemma4-26b-qat up -d` |
-| strata | 8089 | 128K | 见 [Strata 部署](#strata-部署) ¹ |
+| strata | 8089 | 256K | 见 [Strata 部署](#strata-部署) ¹ |
 
 ¹ Strata 是独立引擎、非 llama.cpp，结构上与上面 8 个项目不同类。0.2.1 起官方直接发布 Docker 镜像，**不用再本地编译引擎**；首次部署要预置模型文件，完整步骤见下节。
 
-> **Strata 的三个本机注意点**：① 容器内解析不到 `huggingface.co`（DNS 被污染），所以 `strata/docker-compose.yml` 里设了 `HF_ENDPOINT=https://hf-mirror.com`；② 0.2.x 起服务端**强制 API key**（没设就在首次启动时自动生成，存 `strata-data/state/api-key`），所有客户端都要带 `Authorization: Bearer <key>`；③ 改配置的重启语义——运行配置在 `strata-data/install/strata-<尺寸>.json`（0.1.x 在 `config/`），改完 `docker restart strata` 即可（`up -d` 对运行中的容器是 no-op，不重读 config），改 `strata/docker-compose.yml` 才需要 `./run.sh strata down` 再 `up -d`。
+> **Strata 的三个本机注意点**：① 容器内访问不到 `huggingface.co`（DNS 被污染），`strata/docker-compose.yml` 里设了 `HF_ENDPOINT=https://hf-mirror.com`；但它只对 Hugging Face 工具生效，`strata drafting fetch` 的 DFlash2 下载用写死的地址、不认这个变量，首次安装得在宿主机经代理预置（见 [2.2](#22-packdflash2-与-mtp)）；② 0.2.x 起服务端**强制 API key**（没设就在首次启动时自动生成，存 `strata-data/state/api-key`），所有客户端都要带 `Authorization: Bearer <key>`；③ 改配置的重启语义——运行配置在 `strata-data/install/strata-<尺寸>.json`（0.1.x 在 `config/`），改完 `docker restart strata` 即可（`up -d` 对运行中的容器是 no-op，不重读 config），改 `strata/docker-compose.yml` 才需要 `./run.sh strata down` 再 `up -d`。
 
 ## Strata 部署
 
-`strata/` 是独立引擎 [Niko1221/Strata](https://github.com/Niko1221/Strata)（gitignored），只跑 Qwen3.8-Flash-Next，模型数据落在同级的 `strata-data/`（约 87 GB，也 gitignored）。它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29 GB 查找表），因此能在单张 16 GB 卡上跑 125 B MoE。
+`strata/` 是独立引擎 [Niko1221/Strata](https://github.com/Niko1221/Strata)（gitignored），只跑 Qwen3.8-Flash-Next，模型数据落在同级的 `strata-data/`（约 89 GB，也 gitignored）。它把模型分层放在 GPU（高频 expert）/ RAM（全量）/ SSD（29 GB 查找表），因此能在单张 16 GB 卡上跑 125 B MoE。
 
 **0.2.1 起官方直接发布 Docker 镜像**，不用再 clone 源码编译 CUDA 引擎（以前那套 20~40 分钟的构建流程已作废）。镜像里固定了引擎与 Terminal 的版本，容器入口走 `strata launch`：准备模型 → 加载 → 起服务。
 
@@ -127,22 +127,22 @@ sha256sum llama-xxx/models/SomeFile.gguf            # 与上面的 oid 对照
 
 | 显卡 | 镜像标签 | 宿主要求 |
 |---|---|---|
-| NVIDIA RTX 20/30/40/50 系 | `0.2.2-cuda13` | 驱动 **≥ 580** + NVIDIA Container Toolkit |
-| NVIDIA GTX 10 (Pascal) / Tesla P100 / V100 | `0.2.2-cuda12` | 驱动 **≥ 575**（0.2.2 起 CUDA 12 包又带 Pascal/Volta 代码） |
-| AMD RX 9000 / Radeon AI PRO R9700 | `0.2.1-rocm-gfx120x` | 0.2.2 镜像尚未发布（引擎包有 `hip-rx9070`），先用 0.2.1 |
-| AMD RX 7000 / RX 6000 | `0.2.2-rocm-gfx110x` | `amdgpu` 内核驱动（0.2.2 起顺带 RX 6000 引擎包） |
-| AMD Ryzen AI Max (Strix Halo) | `0.2.2-rocm-gfx1151` | `amdgpu` 内核驱动 |
+| NVIDIA RTX 20/30/40/50 系 | `0.2.12-cuda13` | 驱动 **≥ 580** + NVIDIA Container Toolkit |
+| NVIDIA GTX 10 (Pascal) / Tesla P100 / V100 | `0.2.12-cuda12` | 驱动 **≥ 575**（CUDA 12 包带 Pascal/Volta 代码） |
+| AMD RX 9000 / Radeon AI PRO R9700 | `0.2.12-rocm-gfx120x` | `amdgpu` 内核驱动；0.2.12 的 Auto 在这类卡上回退 MTP（DFlash2 prompt stall），要用 DFlash2 得显式指定 |
+| AMD RX 7000 / RX 6000 | `0.2.12-rocm-gfx110x` | `amdgpu` 内核驱动（含 RX 6000 引擎包） |
+| AMD Ryzen AI Max (Strix Halo) | `0.2.12-rocm-gfx1151` | `amdgpu` 内核驱动 |
 | Intel Arc | 无官方镜像 | 官方没发过 sycl tag；Gyro 可在 Arc 跑，引擎要自己源码编 |
 
 ```bash
-docker pull ghcr.io/niko1221/strata:0.2.2-cuda13   # 本机实测一次拉完（1.4 GB）
+docker pull ghcr.io/niko1221/strata:0.2.12-cuda13   # 本机实测一次拉完（1.6 GB）
 # 拉不动时用 scripts/pull-docker-image.py 走 registry API 并发拉（见 2.3 节的说明）
 ```
 
 拉完先留个回滚标签：
 
 ```bash
-docker tag ghcr.io/niko1221/strata:0.2.2-cuda13 strata:v0.2.2
+docker tag ghcr.io/niko1221/strata:0.2.12-cuda13 strata:v0.2.12
 ```
 
 ### 2. 预置模型文件
@@ -153,7 +153,8 @@ docker tag ghcr.io/niko1221/strata:0.2.2-cuda13 strata:v0.2.2
 |---|---|
 | `strata-data/Strata-data/models/<尺寸>/` | GGUF 分片 + `mmproj-*.gguf`（看图要用） |
 | `strata-data/Strata-data/packs/<尺寸>/` | 准备好的 pack（省掉一次本机转换） |
-| `strata-data/Strata-data/mtp/` | MTP 张量与 draft layer |
+| `strata-data/Strata-data/mtp/` | MTP 张量与 draft layer（5.2 GB，仅作回退） |
+| `strata-data/Strata-data/dflash2/` | DFlash2 drafter pack（0.2.10+ 默认，见 2.2） |
 | `strata-data/install/` | 运行配置 `strata-<尺寸>.json`、日志 |
 | `strata-data/state/` | 预设、调优结果、**API key** |
 | `strata-data/config/` | 终端自身设置 |
@@ -179,24 +180,38 @@ docker run --rm --name download-strata-shards \
 - **看图用的 `mmproj-Qwen3.8-Flash-Next-BF16.gguf` 必须和分片放同一目录**：0.2.x 找不到就直接报「put mmproj-… in <folder>」，不会替你下载。
 - hf-mirror 对 pinned revision（`ed59f920…`）返回 308 未缓存，所以走 `main`——当前 `main` HEAD 恰好等于该 commit，但**将来会漂移**。分片只按 size 校验、不查 sha256，想严格校验就按[下载模型文件](#下载模型文件)那节取 `lfs.oid` 比对。
 
-#### 2.2 pack 与 MTP
+#### 2.2 pack、DFlash2 与 MTP
 
 - **pack**（`packs/<尺寸>/`，含 `native_experts.txt` + `tokenizer/`）：没有它，首次启动会在本机做一次转换（读 79 GB，写约 1.5 GB）。从 0.1.x 升级时，把旧的 `packs/iq3_s` 直接搬进 `Strata-data/packs/` 就能复用，不重转。
-- **MTP draft layer**（`mtp/rt/`）：0.2.x 会自动拉约 5 GB 的 MTP 张量并生成 `mtp/rt/`。想并行加速下载，用引擎自带的 `tools/mtp_fetch.py`（`inventory` / `fetch` / `verify` 三个子命令，`fetch` 支持 `--only <子串>` 过滤；多路并行时过滤串不能重叠，否则互相覆盖）：
+- **DFlash2 drafter**（`dflash2/`）：0.2.10 起，Qwen3.8-Flash-Next 在单请求、受支持的卡上默认用它。首次启动会从 `incoai/Qwen3.8-Flash-Next-DFlash2` 拉固定 revision（1.2 GB），在本机打包成 0.52 GB 的 Q4_0 pack；引擎支持 selector q4 时再转出 0.34 GB 的 selq4 pack（约 0.7 GB 显存，比 MTP 层少）。运行配置里写 `"drafting": "dflash2"` 即每次启动都用它；`auto` / `mtp` / `off` 的语义见 §4。
+- **下载坑**：容器内 `huggingface.co` 不可达（DNS 被污染），且 `strata drafting fetch` 的在线检查和下载用写死的 `BASE_URL`，**不认 `HF_ENDPOINT`**；连不上时它回落到 MTP（日志里是 «no internet connection… starts with the MTP instead»）。要装 DFlash2，先在宿主机经代理按固定 revision 把源文件放进 `strata-data/Strata-data/dflash2/src/`：
 
 ```bash
-export HF_ENDPOINT=https://hf-mirror.com
-cd strata
-python3 tools/mtp_fetch.py fetch --out ../strata-data/Strata-data/mtp \
-  --only mtp.layers.0.mlp.experts.gate_up_proj &
-python3 tools/mtp_fetch.py fetch --out ../strata-data/Strata-data/mtp \
-  --only mtp.layers.0.mlp.experts.down_proj &
-python3 tools/mtp_fetch.py fetch --out ../strata-data/Strata-data/mtp \
-  --only mtp.layers.0.self_attn &
-wait
-python3 tools/mtp_fetch.py fetch  --out ../strata-data/Strata-data/mtp   # 补齐小张量 + manifest，这步不能省
-python3 tools/mtp_fetch.py verify --out ../strata-data/Strata-data/mtp   # 退出码 0 = 全部张量正确
+BASE=https://huggingface.co/incoai/Qwen3.8-Flash-Next-DFlash2/resolve/a22a1744e85c17364dcc54a6a420af7135d4c7f6
+mkdir -p strata-data/Strata-data/dflash2/src && cd strata-data/Strata-data/dflash2/src
+curl -fL "$BASE/config.json" -o config.json                 # 1,236 B
+curl -fL --retry 8 --retry-all-errors -C - "$BASE/model.safetensors" -o model.safetensors   # 1,206,140,008 B
+sha256sum config.json model.safetensors
+# config.json         2409575986f9ea24d455343eb469c0e6940def5edab1d1be503bb8eb4cc3b1b9
+# model.safetensors   d6723f2a359eaf33ec0c95f22ae8edda896774020c552296a85e1913b4d3186f
 ```
+
+再进容器打包（校验通过后源文件会被删掉）：
+
+```bash
+docker exec strata strata drafting fetch --mode dflash2
+```
+
+- **MTP**（`mtp/rt/`，下载 5.2 GB）：0.2.10 起只作回退——DFlash2 不可用（没下下来、`--parallel >1`、卡不支持）时才用。本机的 MTP 已保留，想重下用容器自带的工具（`HF_ENDPOINT` 在这里有效）：
+
+```bash
+docker exec strata /opt/strata/terminal/python/bin/python3 \
+  /opt/strata/terminal/tools/mtp_fetch.py fetch --out /data/Strata-data/mtp
+docker exec strata /opt/strata/terminal/python/bin/python3 \
+  /opt/strata/terminal/tools/mtp_fetch.py verify --out /data/Strata-data/mtp   # 退出码 0 = 全部张量正确
+```
+
+多路并行时用 `--only <子串>` 过滤（子串不能重叠，否则互相覆盖），最后再不带 `--only` 跑一次补齐小张量和 manifest。
 
 #### 2.3 镜像拉不动时
 
@@ -206,7 +221,7 @@ python3 tools/mtp_fetch.py verify --out ../strata-data/Strata-data/mtp   # 退�
 
 ```bash
 ./run.sh strata up -d
-docker logs -f strata            # 首次启动：准备模型 → 加载（本机约 40 s）
+docker logs -f strata            # 首次启动：准备模型 → 加载（本机约 1 分钟）
 ```
 
 **API key**：0.2.x 起服务端**强制**要 key（容器内监听所有地址，不带 key 不给服务）。compose 里没设 `API_KEY` 时，首次启动自动生成并存到 `strata-data/state/api-key`：
@@ -223,24 +238,25 @@ docker exec strata strata launch --show-key --preset docker
 | codex | `~/.codex/<profile>.config.toml` | `[model_providers.<id>]` 里加 `experimental_bearer_token = "<key>"`（或 `env_key = "STRATA_API_KEY"` 走环境变量） |
 | Hermes | `~/.hermes/config.yaml` | `providers.strata.api_key` 填 key |
 
-官方有 `strata connect <app>`（opencode / codex / claude-code / hermes / pi / oh-my-pi / openclaw）能生成这些配置：**默认只打印不写文件**，`--write` 才写（写前询问 + 留备份）。但它的 opencode 输出是 **V1 风格**（`provider` 而非 `providers`），还会顺手改掉默认模型、`compaction`、`share`；codex / hermes 的输出是**整文件替换**。所以本仓库的做法是：**只把它当参考，key 手工填进自己的配置**。
+官方有 `strata connect <app>`（opencode / codex / claude-code / omp / pi / hermes / openclaw / deepseek-harness）能生成这些配置：**默认只打印不写文件**，`--write` 才写（写前询问 + 留备份）。但它的 opencode 输出是 **V1 风格**（`provider` 而非 `providers`），还会顺手改掉默认模型、`compaction`、`share`；codex / hermes 的输出是**整文件替换**。所以本仓库的做法是：**只把它当参考，key 手工填进自己的配置**。
 
 ### 4. 配置改哪儿
 
 - **运行配置**：`strata-data/install/strata-<尺寸>.json`（0.1.x 时代在 `strata-data/config/`，升级后位置变了）。
 - `args` 是 setup 自有键，**重跑 setup 会被覆盖**；`user_args` 才是你手改的引擎参数（每次启动都盖在 `args` 上）。`expert_profile_save` / `vram_elastic` / `vision.elastic` / `reasoning_budget_tokens` 这些顶层键通常会被后续 setup 保留，**但换引擎大版本的镜像有一条例外，见下一节**。
+- `drafting`：drafter 选择，取值 `auto`（默认）/ `mtp` / `dflash2` / `off`。本机显式写 `dflash2`；`auto` 在支持的卡和模型上自动选 DFlash2，多请求并发或不支持的卡回退 MTP。它由 serve 在每次启动时应用（不在 `args` 里），也可用 `strata launch --drafting dflash2` 写入；换镜像重写配置时同样会丢，按 §5 重放。
 - 改完 `docker restart strata` 即可生效；改 `docker-compose.yml` 里的环境变量（MODEL / CONTEXT / VISION / KV / STRATA_SET 等）要 `./run.sh strata down` 再 `up -d`。
 - 0.1.x 的 `LOW_RAM` / `RESIDENT_BUDGET_GIB` / `KV_STREAMING` / `LAYER_SPLIT` / `CONFIG` / `REINSTALL` 在 0.2.x **已废弃**，只打警告并忽略；`HOST` 也不再需要（容器内本来就监听所有地址，能被谁访问由端口映射决定）。
 
 ### 5. 更新与回滚
 
 ```bash
-docker compose pull && ./run.sh strata down && ./run.sh strata up -d
+./run.sh strata pull && ./run.sh strata down && ./run.sh strata up -d
 ```
 
-模型文件、pack、预设、调优结果都在卷里，换镜像不会重下。回滚：把 compose 的 `image:` 改回旧标签（更新前 `docker tag` 留好），`down` 之后再 `up -d`。
+模型文件、pack、DFlash2/MTP、预设、调优结果都在卷里，换镜像不会重下。回滚：把 compose 的 `image:` 改回旧标签（更新前 `docker tag` 留好），`down` 之后再 `up -d`。
 
-⚠️ **0.2.2 实测的坑：换引擎大版本会重生成运行配置。** 容器启动时若发现旧配置里的组件路径在新镜像里不存在（引擎目录名随版本变，如 `0.1.46-…/strata-vision` → `0.1.47-…`；开着 vision 时必触发），入口会打出一行 «making them again» 然后**整个重写** `install/strata-<尺寸>.json`——`user_args`、`expert_profile_save`、`vram_elastic`、`vision.elastic`、`reasoning_budget_tokens` 全部丢，引擎参数回落到自动算的默认值（本机实测 pool 13、槽位 3771、expert-profile 指回镜像内路径）。API key、模型文件、pack、MTP、学习版专家画像（`config/expert-profile-learned.bin`）不受影响。
+⚠️ **0.2.2 / 0.2.7 / 0.2.8 / 0.2.9 / 0.2.11 / 0.2.12 实测的坑：换引擎大版本会重生成运行配置。** 容器启动时若发现旧配置里的组件路径在新镜像里不存在（引擎目录名随版本变，如 `0.1.46-…/strata-vision` → `0.1.47-…`；开着 vision 时必触发），入口会打出一行 «making them again» 然后**整个重写** `install/strata-<尺寸>.json`——`user_args`、`expert_profile_save`、`vram_elastic`、`vision.elastic`、`reasoning_budget_tokens`、`drafting` 全部丢，引擎参数回落到自动算的默认值（0.2.2 本机实测 pool 13、槽位 3771、expert-profile 指回镜像内路径；0.2.7 升级到 0.1.52 时同样触发，重写后 128K 槽位 3756；0.2.8 升级到 0.1.54 再次触发，256K 槽位 4328→4204；0.2.9 升级到 0.1.55 又一次，槽位 4204→4202；0.2.11 升级到 0.1.57 再次触发；0.2.12 升级到 0.1.58 又一次）。API key、模型文件、pack、MTP、DFlash2 pack、学习版专家画像（`config/expert-profile-learned.bin`）不受影响。
 
 升级后必须重放用户键再 `docker restart strata`，重放完成核对 `slots` / `pool_workers`：
 
@@ -249,15 +265,16 @@ python3 - <<'EOF'
 import json
 p = 'strata-data/install/strata-iq3_s.json'
 c = json.load(open(p))
-c['user_args'] = ['--pool-workers', '14']
+c['user_args'] = ['--pool-workers', '14', '--max-context', '262144']
 c['expert_profile_save'] = '/data/config/expert-profile-learned.bin'
 c['vram_elastic'] = True
 c['reasoning_budget_tokens'] = 16384
 c.setdefault('vision', {})['elastic'] = True
+c['drafting'] = 'dflash2'
 json.dump(c, open(p, 'w'), indent=1)
 EOF
 docker restart strata
-# 验证（期望 4454 / 14）：curl -s localhost:8089/metrics -H "Authorization: Bearer $(cat strata-data/state/api-key)" | see engine.expert_slots / pool_workers
+# 验证（256K 约 4376 / 14）：curl -s localhost:8089/metrics -H "Authorization: Bearer $(cat strata-data/state/api-key)" | see engine.expert_slots / pool_workers
 ```
 
 ### 6. 性能测量
@@ -265,16 +282,22 @@ docker restart strata
 `strata-bench/` 是标准化的测试工具（固定协议 + 结果留档 + 配对比较），换版本或改配置后用它测，别直接拿两次数字相减：
 
 ```bash
-python3 strata-bench/strata_bench.py bench --label "0.2.1"
+python3 strata-bench/strata_bench.py bench --label "0.2.12"
 python3 strata-bench/strata_bench.py compare results/旧.json results/新.json
 ```
 
-本机实测（RTX 5070 Ti，IQ3_S，128K）：
+本机实测（RTX 5070 Ti，IQ3_S，256K）：
 
 | 版本变化 | decode | prefill | 结论 |
 |---|---|---|---|
 | 0.1.45 → 0.2.1（engine 0.1.45→0.1.46） | 配对均值 **+3.12 tok/s（+2.9%）**，13/15 正，p=0.0082；中位 108.3 → 110.8 | 2944.8 → 2894.7（−1.7%） | 官方镜像/数据布局迁移的收益 |
 | 0.2.1 → 0.2.2（engine 0.1.46→0.1.47） | 配对均值 **−0.90 tok/s，p=0.59（不显著）**；中位 110.8 → 112.3 | 2894.7 → 2931.8（+1.3%） | 引擎对 Qwen 的路径没改（源码仅一处 VDEBUG 编译修复），速度等价，符合预期 |
+| 128K → 256K 上下文（0.2.2，未换引擎） | 配对均值 **−0.97 tok/s，p=0.42（不显著）**；中位 112.3 → 110.6 | 2931.8 → 2940.7（+0.3%） | 显存槽位 4454→4339，短上下文速度在噪声内 |
+| 0.2.3 → 0.2.7（engine 0.1.48→0.1.52，256K） | 配对均值 **−1.23 tok/s，p=0.37（不显著）**；中位 109.8 → 108.2 | 2688.0 → 2718.3（+1.1%） | decode 等价，prefill 略快；槽位 4339→4328 |
+| 0.2.7 → 0.2.8（engine 0.1.52→0.1.54，256K） | 配对均值 **−1.79 tok/s，p=0.23（不显著）**；中位 108.2 → 106.0 | 2718.3 → 2757.8（+1.5%） | decode 等价（同配置重跑漂移 +2.85，p=0.073）；槽位 4328→4204 |
+| 0.2.8 → 0.2.9（engine 0.1.54→0.1.55，256K） | 配对均值 +1.34 tok/s，p=0.21（不显著）；中位 109.2 → 111.3 | 2772.6 → 2887.2（**+4.1%**） | prompt 变快，decode 不变；槽位 4204→4202 |
+| 0.2.9 → 0.2.11（engine 0.1.55→0.1.57，256K，DFlash2） | 配对均值 **+6.57 tok/s，p=0.0049**（中位 111.3 → 116.4）；同版本重跑漂移 −1.45（p=0.37） | 2887.2 → 2843.5（−1.5%） | DFlash2 接受率 67.4%→84.0%；槽位 4202→4377，`prefill_cap` 8192→16640 |
+| 0.2.11 → 0.2.12（engine 0.1.57→0.1.58，256K，DFlash2） | 配对均值 +0.91 tok/s，p=0.56（不显著）；中位 116.4 → 118.5 | 2843.5 → 2868.7（+0.9%，噪声） | 等价；tuned DFlash2 需 ≥12000 槽，本机 4376 不适用；槽位基本不变 |
 
 详见 [`strata-bench/README.md`](strata-bench/README.md) 与 `docs/strata-tuning.md`（本机笔记，不进版本库）。
 
