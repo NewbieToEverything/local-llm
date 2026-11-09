@@ -1,0 +1,164 @@
+{
+ "label": "0.2.11-256k-dflash2-b2",
+ "time": "2026-11-06T17:19:01",
+ "model": "qwen3.8-flash-next-iq3_s",
+ "url": "http://127.0.0.1:8089",
+ "rounds": 3,
+ "max_tokens": 200,
+ "decode": [
+  115.5,
+  116.4,
+  129.4,
+  107.5,
+  115.6,
+  115.8,
+  119.0,
+  142.9,
+  109.1,
+  129.2,
+  121.4,
+  115.5,
+  135.3,
+  109.7,
+  120.4
+ ],
+ "prefill": [
+  2870.9,
+  2838.2,
+  2843.5
+ ],
+ "rows": [
+  {
+   "round": 1,
+   "name": "中文技术问答",
+   "decode": 115.5,
+   "hit": 0.857,
+   "out": 200,
+   "prompt_tokens": 85
+  },
+  {
+   "round": 1,
+   "name": "英文代码理解",
+   "decode": 116.4,
+   "hit": 0.65,
+   "out": 200,
+   "prompt_tokens": 105
+  },
+  {
+   "round": 1,
+   "name": "中文代码审查",
+   "decode": 129.4,
+   "hit": 0.771,
+   "out": 200,
+   "prompt_tokens": 135
+  },
+  {
+   "round": 1,
+   "name": "英文通用问答",
+   "decode": 107.5,
+   "hit": 0.808,
+   "out": 200,
+   "prompt_tokens": 85
+  },
+  {
+   "round": 1,
+   "name": "中文长文摘要",
+   "decode": 115.6,
+   "hit": 0.784,
+   "out": 167,
+   "prompt_tokens": 143
+  },
+  {
+   "round": 2,
+   "name": "中文技术问答",
+   "decode": 115.8,
+   "hit": 0.842,
+   "out": 200,
+   "prompt_tokens": 85
+  },
+  {
+   "round": 2,
+   "name": "英文代码理解",
+   "decode": 119.0,
+   "hit": 0.664,
+   "out": 200,
+   "prompt_tokens": 105
+  },
+  {
+   "round": 2,
+   "name": "中文代码审查",
+   "decode": 142.9,
+   "hit": 0.797,
+   "out": 200,
+   "prompt_tokens": 135
+  },
+  {
+   "round": 2,
+   "name": "英文通用问答",
+   "decode": 109.1,
+   "hit": 0.781,
+   "out": 200,
+   "prompt_tokens": 85
+  },
+  {
+   "round": 2,
+   "name": "中文长文摘要",
+   "decode": 129.2,
+   "hit": 0.797,
+   "out": 200,
+   "prompt_tokens": 143
+  },
+  {
+   "round": 3,
+   "name": "中文技术问答",
+   "decode": 121.4,
+   "hit": 0.862,
+   "out": 200,
+   "prompt_tokens": 85
+  },
+  {
+   "round": 3,
+   "name": "英文代码理解",
+   "decode": 115.5,
+   "hit": 0.674,
+   "out": 200,
+   "prompt_tokens": 105
+  },
+  {
+   "round": 3,
+   "name": "中文代码审查",
+   "decode": 135.3,
+   "hit": 0.78,
+   "out": 200,
+   "prompt_tokens": 135
+  },
+  {
+   "round": 3,
+   "name": "英文通用问答",
+   "decode": 109.7,
+   "hit": 0.807,
+   "out": 200,
+   "prompt_tokens": 85
+  },
+  {
+   "round": 3,
+   "name": "中文长文摘要",
+   "decode": 120.4,
+   "hit": 0.791,
+   "out": 166,
+   "prompt_tokens": 143
+  }
+ ],
+ "engine": {
+  "version": "0.1.57",
+  "model": "qwen3.8-flash-next-iq3_s",
+  "expert_slots": 4377,
+  "expert_cache_mib": 8533,
+  "pool_workers": 14,
+  "vram_free_mib": 732,
+  "kv": "int8",
+  "max_context": 262144,
+  "vram_elastic": 1,
+  "prefill_cap": 16640
+ }
+}

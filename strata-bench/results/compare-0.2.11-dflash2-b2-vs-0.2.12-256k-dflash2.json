@@ -1,0 +1,12 @@
+{
+ "label": "compare:0.2.11-256k-dflash2-b2 vs 0.2.12-256k-dflash2",
+ "time": "2026-11-08T19:30:19",
+ "test": "compare",
+ "pairs": 15,
+ "mean_diff_B_minus_A": 0.9133333333333307,
+ "p": 0.56103515625,
+ "median_a": 116.4,
+ "median_b": 118.5,
+ "prefill_a": 2843.5,
+ "prefill_b": 2868.7
+}

@@ -1,0 +1,12 @@
+{
+ "label": "compare:0.2.8-256k-b2 vs 0.2.8-256k-lookup2",
+ "time": "2026-10-30T10:24:13",
+ "test": "compare",
+ "pairs": 15,
+ "mean_diff_B_minus_A": 0.7399999999999997,
+ "p": 0.55865478515625,
+ "median_a": 109.2,
+ "median_b": 107.8,
+ "prefill_a": 2772.6,
+ "prefill_b": 2760.8
+}

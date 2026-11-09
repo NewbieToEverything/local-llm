@@ -1,0 +1,12 @@
+{
+ "label": "compare:0.2.2 vs 0.2.2-256k",
+ "time": "2026-10-26T00:43:58",
+ "test": "compare",
+ "pairs": 15,
+ "mean_diff_B_minus_A": -0.9733333333333348,
+ "p": 0.42254638671875,
+ "median_a": 112.3,
+ "median_b": 110.6,
+ "prefill_a": 2931.8,
+ "prefill_b": 2940.7
+}
