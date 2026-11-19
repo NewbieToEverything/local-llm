@@ -127,22 +127,22 @@ sha256sum llama-xxx/models/SomeFile.gguf            # 与上面的 oid 对照
 
 | 显卡 | 镜像标签 | 宿主要求 |
 |---|---|---|
-| NVIDIA RTX 20/30/40/50 系 | `0.2.12-cuda13` | 驱动 **≥ 580** + NVIDIA Container Toolkit |
-| NVIDIA GTX 10 (Pascal) / Tesla P100 / V100 | `0.2.12-cuda12` | 驱动 **≥ 575**（CUDA 12 包带 Pascal/Volta 代码） |
-| AMD RX 9000 / Radeon AI PRO R9700 | `0.2.12-rocm-gfx120x` | `amdgpu` 内核驱动；0.2.12 的 Auto 在这类卡上回退 MTP（DFlash2 prompt stall），要用 DFlash2 得显式指定 |
-| AMD RX 7000 / RX 6000 | `0.2.12-rocm-gfx110x` | `amdgpu` 内核驱动（含 RX 6000 引擎包） |
-| AMD Ryzen AI Max (Strix Halo) | `0.2.12-rocm-gfx1151` | `amdgpu` 内核驱动 |
-| Intel Arc | 无官方镜像 | 官方没发过 sycl tag；Gyro 可在 Arc 跑，引擎要自己源码编 |
+| NVIDIA RTX 20/30/40/50 系 | `0.2.16-cuda13` | 驱动 **≥ 580** + NVIDIA Container Toolkit |
+| NVIDIA GTX 10 (Pascal) / Tesla P100 / V100 | `0.2.16-cuda12` | 驱动 **≥ 575**（CUDA 12 包带 Pascal/Volta 代码） |
+| AMD RX 9000 / Radeon AI PRO R9700 | `0.2.16-rocm-gfx120x` | `amdgpu` 内核驱动；要用 DFlash2 显式指定 |
+| AMD RX 7000 / RX 6000 | `0.2.16-rocm-gfx110x` | `amdgpu` 内核驱动（含 RX 6000 引擎包） |
+| AMD Ryzen AI Max (Strix Halo) | `0.2.16-rocm-gfx1151` | `amdgpu` 内核驱动 |
+| Intel Arc | `0.2.16-sycl` | 官方自 0.2.13 起发布 sycl 镜像；旧版本无 |
 
 ```bash
-docker pull ghcr.io/niko1221/strata:0.2.12-cuda13   # 本机实测一次拉完（1.6 GB）
+docker pull ghcr.io/niko1221/strata:0.2.16-cuda13   # 本机实测一次拉完（约 1.6 GB）
 # 拉不动时用 scripts/pull-docker-image.py 走 registry API 并发拉（见 2.3 节的说明）
 ```
 
 拉完先留个回滚标签：
 
 ```bash
-docker tag ghcr.io/niko1221/strata:0.2.12-cuda13 strata:v0.2.12
+docker tag ghcr.io/niko1221/strata:0.2.16-cuda13 strata:v0.2.16
 ```
 
 ### 2. 预置模型文件
@@ -298,6 +298,7 @@ python3 strata-bench/strata_bench.py compare results/旧.json results/新.json
 | 0.2.8 → 0.2.9（engine 0.1.54→0.1.55，256K） | 配对均值 +1.34 tok/s，p=0.21（不显著）；中位 109.2 → 111.3 | 2772.6 → 2887.2（**+4.1%**） | prompt 变快，decode 不变；槽位 4204→4202 |
 | 0.2.9 → 0.2.11（engine 0.1.55→0.1.57，256K，DFlash2） | 配对均值 **+6.57 tok/s，p=0.0049**（中位 111.3 → 116.4）；同版本重跑漂移 −1.45（p=0.37） | 2887.2 → 2843.5（−1.5%） | DFlash2 接受率 67.4%→84.0%；槽位 4202→4377，`prefill_cap` 8192→16640 |
 | 0.2.11 → 0.2.12（engine 0.1.57→0.1.58，256K，DFlash2） | 配对均值 +0.91 tok/s，p=0.56（不显著）；中位 116.4 → 118.5 | 2843.5 → 2868.7（+0.9%，噪声） | 等价；tuned DFlash2 需 ≥12000 槽，本机 4376 不适用；槽位基本不变 |
+| 0.2.12 → 0.2.16（engine 0.1.58→0.1.62，256K，DFlash2） | 配对均值 **−14.27 tok/s（−12%），p=6.1e-05**，15/15 全负；中位 118.5 → 101.5；同版本重跑漂移 −0.43（p=0.73） | 2868.7 → 17099（口径变了：`prefill_cap` 16640→20736，5K prompt 不再分块，首 token 实测 ~1.7s→~0.23s，数字不可直接比） | **decode 显著回退**，来自 0.1.62 重写的内核（去掉 ggml/llama.cpp 矩阵内核），非 drafter 参数：改 `--spec 4`（DFlash2 被引擎忽略、仍 spec=6）、`--draft-conf 0.9`（反而 −6.0 tok/s）、切 MTP（仍慢 15.2 tok/s）都救不回；槽位 4376→4389。08-08 距本测 11 天，短回复首 token 更快、长输出更慢，权衡后保留 |
 
 详见 [`strata-bench/README.md`](strata-bench/README.md) 与 `docs/strata-tuning.md`（本机笔记，不进版本库）。
 
